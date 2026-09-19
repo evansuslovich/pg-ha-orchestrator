@@ -1,0 +1,34 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Compiled binaries from `go build` (no extension, matches this repo's layout)
+pg-ha-orchestrator
+client/client
+server/server
+rpc-example/client/client
+rpc-example/server/server
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of `go coverage`
+*.out
+coverage.txt
+
+# Dependency directories
+vendor/
+
+# Go workspace file
+go.work
+go.work.sum
+
+# env files
+.env
+.env.local
+
+# OS
+.DS_Store
