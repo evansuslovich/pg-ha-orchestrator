@@ -163,3 +163,17 @@ election_timeout (110ms - 50ms) elapsed and a follower will now turn into a cand
  - `MTBF`: (several months or more) average time between failures for a single server
 
 
+# Notes on net/rpc
+ - Package rpc provides access to the exported methods of an object across a network or other I/O connection
+ - Only methods that satisfy these criteria will be made available for remote access:
+   - the method' type is exported
+   - the method is exported
+   - the method has two arguments, both exported (or builtin) types
+   - the method's second argument is a pointer
+   - the method has return type error
+ - schematically like: func (t *T) MethodName(argType T1, replyType *T2) error
+   - T1 and T2 can be marshaled by encoding/gov
+   - argType: the arguments provided by the caller
+   - the result parameters to be returned to the caller
+ - See `/rpc-example` for a basic implementation 
+
