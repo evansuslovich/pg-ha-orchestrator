@@ -1,8 +1,11 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"net/rpc"
+
+	"github.com/evansuslovich/pg-ha-orchestrator/raft"
 )
 
 func main() {
@@ -11,10 +14,10 @@ func main() {
 		log.Fatal("dialing:", err)
 	}
 
-	// args := &arith.Args{A: 7, B: 8}
-	// var reply int
-	// if err := client.Call("Arith.Multiply", args, &reply); err != nil {
-	// 	log.Fatal("arith error:", err)
-	// }
-	// fmt.Printf("Arith: %d*%d=%d\n", args.A, args.B, reply)
+	args := &raft.Args{}
+	var response raft.RaftResponse
+	if err := client.Call("Raft.Run", args, &response); err != nil {
+		log.Fatal("raft error:", err)
+	}
+	fmt.Printf("Count of nodes: %d\n", response.Count)
 }

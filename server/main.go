@@ -5,14 +5,16 @@ import (
 	"net"
 	"net/http"
 	"net/rpc"
-	"rpc/arith"
+
+	"github.com/evansuslovich/pg-ha-orchestrator/raft"
 )
 
 func main() {
-	a := new(arith.Arith)
+	raft := new(raft.Raft)
 	// Register: server registers an object, making it visible as a service with the name of the type of the object
-	rpc.Register(a)
+	rpc.Register(raft)
 	rpc.HandleHTTP()
+	// https://pkg.go.dev/net#Listen
 	l, err := net.Listen("tcp", ":1234")
 	if err != nil {
 		log.Fatal("listen error:", err)
