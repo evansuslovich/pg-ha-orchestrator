@@ -6,6 +6,7 @@ import (
 	"net/rpc"
 	"slices"
 	"strconv"
+	"sync"
 )
 
 type Raft struct {
@@ -17,9 +18,6 @@ type Args struct {
 	Count int
 }
 
-type RaftResponse struct {
-	Count int
-}
 type Response struct {
 	Value string
 }
@@ -32,16 +30,52 @@ func NumberToLetter(n int) string {
 	return string(rune('A' + n - 1))
 }
 
-func (raft *Raft) Run(args *Args, response *RaftResponse) error {
+type RunArgs struct{}
+
+type RunResponse struct{}
+
+func (raft *Raft) Run(args *Args, response *RunResponse) error {
+	for _, node := range raft.Nodes {
+		go node.Run()
+	}
+	return nil
+}
+
+type startResult struct {
+	node *Node
+	err  error
+}
+type BuildResponse struct {
+	Count int
+}
+
+func (raft *Raft) Build(args *Args, response *BuildResponse) error {
+
+	results := make(chan startResult, args.Count)
+	var startWg sync.WaitGroup
 
 	for i := 0; i < args.Count; i++ {
-		nodeArgs := &NodeArgs{Id: i + 1, Name: NumberToLetter(i + 1), TimeoutLength: 50}
-		node, err := StartServer(nodeArgs)
-		if err != nil {
-			return errors.New("encountered error starting node " + strconv.Itoa(i+1) + ": " + err.Error())
+		startWg.Add(1)
+		go func(id int) {
+			defer startWg.Done()
+			node, err := StartServer(&NodeArgs{Id: id, Name: NumberToLetter(id), TimeoutLength: 2000})
+
+			results <- startResult{node: node, err: err}
+		}(i + 1)
+	}
+
+	go func() {
+		startWg.Wait()
+		close(results)
+	}()
+
+	for res := range results {
+		if res.err != nil {
+			return errors.New("encountered error starting a node: " + res.err.Error())
 		}
+
 		raft.Count += 1
-		raft.Nodes = append(raft.Nodes, node)
+		raft.Nodes = append(raft.Nodes, res.node)
 	}
 
 	response.Count = raft.Count
@@ -73,5 +107,18 @@ func (raft *Raft) View(args *ViewArgs, response *ViewResponse) error {
 		log.Fatal("raft error:", err)
 	}
 
+	return nil
+}
+
+func (raft *Raft) Stop(args *ViewArgs, response *Response) error {
+	index := slices.IndexFunc(raft.Nodes, func(n *Node) bool {
+		return n.id == args.Id
+	})
+	if index == -1 {
+		return errors.New("Node id: " + strconv.Itoa(args.Id) + " not found")
+	}
+
+	raft.Nodes[index].Stop()
+	response.Value = "stopped node " + strconv.Itoa(args.Id)
 	return nil
 }

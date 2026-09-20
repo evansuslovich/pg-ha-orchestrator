@@ -46,6 +46,7 @@ type Node struct {
 	timer   *time.Timer
 	nodes   []Node
 	address string // TCP address
+	stop    chan struct{}
 }
 
 type EmptyArgs struct{}
@@ -97,10 +98,11 @@ func StartServer(args *NodeArgs) (*Node, error) {
 		id:            args.Id,
 		name:          args.Name,
 		role:          Follower,
-		timeoutLength: 100 + rand.N(args.TimeoutLength),
+		timeoutLength: 3000 + rand.N(args.TimeoutLength),
 		state:         make(map[string]int),
 		timer:         time.NewTimer(time.Millisecond),
 		address:       address,
+		stop:          make(chan struct{}),
 	}
 	server := rpc.NewServer()
 	server.Register(node)
@@ -117,17 +119,32 @@ func StartServer(args *NodeArgs) (*Node, error) {
 	return node, nil
 }
 
-// func (server *Node) Run(wg *sync.WaitGroup) {
-// 	defer wg.Done()
-//
-// 	fmt.Printf("%s starting \n", server.name)
-//
-// 	start := time.Now()
-// 	server.timer.Reset(time.Duration(server.timeoutLength) * time.Millisecond)
-// 	// <- operator is the chanel operator used to send or receive values through a concurreny channel
-// 	<-server.timer.C
-//
-// 	elapsed := time.Since(start)
-// 	fmt.Printf("%s elapsed for %s timeoutLength: %d\n", elapsed, server.name, server.timeoutLength)
-// 	server.beginElection()
-// }
+// If a follower receives no communication over a period of time (electionTimeout) then it assumes there is no viable leader and begins an election
+func (node *Node) beginElection() {
+	node.currentTerm += 1
+	node.role = Candidate
+	node.votedFor = node.id
+}
+
+func (node *Node) Run() {
+	fmt.Printf("%s starting \n", node.name)
+	node.stop = make(chan struct{})
+	for {
+		start := time.Now()
+		node.timer.Reset(time.Duration(node.timeoutLength) * time.Millisecond)
+
+		select {
+		case <-node.timer.C:
+			elapsed := time.Since(start)
+			fmt.Printf("%s elapsed for %s timeoutLength: %d\n", elapsed, node.name, node.timeoutLength)
+			node.beginElection()
+		case <-node.stop:
+			fmt.Printf("%s stopping\n", node.name)
+			return
+		}
+	}
+}
+
+func (node *Node) Stop() {
+	close(node.stop)
+}

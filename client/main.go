@@ -20,13 +20,6 @@ func main() {
 		log.Fatal("dialing:", err)
 	}
 
-	// args := &raft.Args{}
-	// var response raft.RaftResponse
-	// if err := client.Call("Raft.Run", args, &response); err != nil {
-	// 	log.Fatal("raft error:", err)
-	// }
-	// fmt.Printf("Count of nodes: %d\n", response.Count)
-
 	for {
 		fmt.Print("Enter a command: ")
 		input, err := reader.ReadString('\n')
@@ -62,9 +55,38 @@ func main() {
 			}
 			fmt.Printf(response.Node)
 
-		case "setup":
+		case "run":
+			args := &raft.RunArgs{}
+			var response raft.RunResponse
+			if err := client.Call("Raft.Run", args, &response); err != nil {
+				log.Fatal(err)
+			}
+		case "stop":
 			if len(inputs) < 2 {
-				fmt.Println("usage: setup <count>")
+				fmt.Println("usage: stop <id>")
+				continue
+			}
+
+			id, err := strconv.Atoi(inputs[1])
+			if id < 1 {
+				fmt.Println("Non-positive id:", strconv.Itoa(id))
+				continue
+			}
+			if err != nil {
+				fmt.Println("invalid node id:", err)
+				continue
+			}
+
+			args := &raft.ViewArgs{Id: id}
+			var response raft.Response
+			if err := client.Call("Raft.Stop", args, &response); err != nil {
+				log.Fatal(err)
+			}
+			fmt.Println(response.Value)
+
+		case "build":
+			if len(inputs) < 2 {
+				fmt.Println("usage: build <count>")
 				continue
 			}
 
@@ -78,8 +100,8 @@ func main() {
 			}
 
 			args := &raft.Args{Count: count_of_nodes}
-			var response raft.RaftResponse
-			if err := client.Call("Raft.Run", args, &response); err != nil {
+			var response raft.BuildResponse
+			if err := client.Call("Raft.Build", args, &response); err != nil {
 				log.Fatal(err)
 			}
 			fmt.Printf("Count of nodes running: %d\n", response.Count)

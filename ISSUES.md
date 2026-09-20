@@ -16,3 +16,10 @@
 ## Running http.Serve(...) in Raft.Run 
  - On initialization of a new node, I ran http.Serve(...) resulting in the client to hang
  - I'll have to put it inside a goroutine 
+
+
+## How to stop node.timer.c?
+ - using `chan struct{}`: a channel used exclusively for signaling and synchronization between goroutines, rather than for trasferring data.
+ - benefits of `chan struct{}`
+   - zero memory footprint: o bytes
+   - clear code intent: tells the reader that data isn't passed, rather coordinating
