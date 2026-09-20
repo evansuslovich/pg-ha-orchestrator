@@ -177,3 +177,20 @@ election_timeout (110ms - 50ms) elapsed and a follower will now turn into a cand
    - the result parameters to be returned to the caller
  - See `/rpc-example` for a basic implementation 
 
+
+
+## Notes on Voting Algorithm:
+ - Candidate in a parallel requests votes from all other nodes
+
+ - Claude assisted pseudocode:
+   - 1. If candidate's term < node's currentTerm then reject
+   - 2. Catch up to a newer term: unconditional and play catch up
+        - node's currentTerm = candidate's term
+        - update node to Follower
+        - updaet votedFor to null
+   - 3. Is the candidate up to date log wise?
+       - candidate's last log index >= node's last log index
+       - validate that the value at index match
+         - handle on fresh start when logs are empty
+         - candidate.lastLogTerm == node[lastLogTermIndex]
+   - 4. Has the node voted for anyone else in the term?

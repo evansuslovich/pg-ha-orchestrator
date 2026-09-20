@@ -26,3 +26,4 @@
 
 ## RPC + Golang + Context
 - [ x ] Get an idea of RPC + HTTP server
+- [ ]  Contact other Nodes from One Node via RPC

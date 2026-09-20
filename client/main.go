@@ -105,6 +105,13 @@ func main() {
 				log.Fatal(err)
 			}
 			fmt.Printf("Count of nodes running: %d\n", response.Count)
+
+		case "help":
+			fmt.Println("build <count>     build <n> number nodes")
+			fmt.Println("select <id>       view state of a node")
+			fmt.Println("stop <id>         pause node")
+			fmt.Println("run               run nodes")
+			fmt.Println("exit              exit application")
 		case "exit":
 			fmt.Println("Exiting program. Goodbye!")
 			return
