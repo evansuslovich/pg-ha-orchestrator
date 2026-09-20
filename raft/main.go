@@ -1,8 +1,11 @@
 package raft
 
 import (
+	"errors"
 	"log"
 	"net/rpc"
+	"slices"
+	"strconv"
 )
 
 type Raft struct {
@@ -10,7 +13,9 @@ type Raft struct {
 	Nodes []*Node
 }
 
-type Args struct{}
+type Args struct {
+	Count int
+}
 
 type RaftResponse struct {
 	Count int
@@ -19,35 +24,54 @@ type Response struct {
 	Value string
 }
 
+func NumberToLetter(n int) string {
+	if n < 1 || n > 26 {
+		return "Invalid (Out of A-Z range)"
+	}
+	// 'A' is 65 in ASCII. If n=1: 65 + 1 - 1 = 65 ('A')
+	return string(rune('A' + n - 1))
+}
+
 func (raft *Raft) Run(args *Args, response *RaftResponse) error {
-	nodeArgs := &NodeArgs{Id: 1, Name: "Node A", TimeoutLength: 50}
-	node := StartServer(nodeArgs)
 
-	raft.Count += 1
-	raft.Nodes = append(raft.Nodes, node)
-
-	nodeArgs = &NodeArgs{Id: 2, Name: "Node B", TimeoutLength: 50}
-	node = StartServer(nodeArgs)
-
-	raft.Count += 1
-	raft.Nodes = append(raft.Nodes, node)
+	for i := 0; i < args.Count; i++ {
+		nodeArgs := &NodeArgs{Id: i + 1, Name: NumberToLetter(i + 1), TimeoutLength: 50}
+		node, err := StartServer(nodeArgs)
+		if err != nil {
+			return errors.New("encountered error starting node " + strconv.Itoa(i+1) + ": " + err.Error())
+		}
+		raft.Count += 1
+		raft.Nodes = append(raft.Nodes, node)
+	}
 
 	response.Count = raft.Count
 	return nil
 }
 
-func (raft *Raft) View(args *Args, response *Response) error {
-	var viewResponse ViewResponse
+type ViewArgs struct {
+	Id int
+}
 
-	client, err := rpc.Dial("tcp", "localhost:1235")
+func (raft *Raft) View(args *ViewArgs, response *ViewResponse) error {
+	// find corresponding Node
+	index := slices.IndexFunc(raft.Nodes, func(n *Node) bool {
+		return n.id == args.Id
+	})
+
+	if index == -1 {
+		return errors.New("Node id: " + strconv.Itoa(args.Id) + " not found")
+	}
+
+	selected_node := raft.Nodes[index]
+
+	client, err := rpc.Dial("tcp", selected_node.address)
 	if err != nil {
 		log.Fatal("dialing:", err)
 	}
 
-	if err := client.Call("Node.View", EmptyArgs{}, &viewResponse); err != nil {
+	if err := client.Call("Node.View", EmptyArgs{}, response); err != nil {
 		log.Fatal("raft error:", err)
 	}
 
-	response.Value = viewResponse.Node
 	return nil
 }

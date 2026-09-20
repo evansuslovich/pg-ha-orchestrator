@@ -1,23 +1,96 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"log"
 	"net/rpc"
+	"os"
+	"strconv"
+	"strings"
 
 	"github.com/evansuslovich/pg-ha-orchestrator/raft"
 )
 
 func main() {
+	reader := bufio.NewReader(os.Stdin)
+
 	client, err := rpc.DialHTTP("tcp", "localhost:1234")
 	if err != nil {
 		log.Fatal("dialing:", err)
 	}
 
-	args := &raft.Args{}
-	var response raft.RaftResponse
-	if err := client.Call("Raft.Run", args, &response); err != nil {
-		log.Fatal("raft error:", err)
+	// args := &raft.Args{}
+	// var response raft.RaftResponse
+	// if err := client.Call("Raft.Run", args, &response); err != nil {
+	// 	log.Fatal("raft error:", err)
+	// }
+	// fmt.Printf("Count of nodes: %d\n", response.Count)
+
+	for {
+		fmt.Print("Enter a command: ")
+		input, err := reader.ReadString('\n')
+		if err != nil {
+			fmt.Println("Error reading input:", err)
+			continue
+		}
+
+		inputs := strings.Fields(input)
+
+		// Switch case command handling
+		switch inputs[0] {
+		case "select":
+			if len(inputs) < 2 {
+				fmt.Println("usage: select <id>")
+				continue
+			}
+
+			id, err := strconv.Atoi(inputs[1])
+			if id < 1 {
+				fmt.Println("Non-positive id:", strconv.Itoa(id))
+				continue
+			}
+			if err != nil {
+				fmt.Println("invalid node id:", err)
+				continue
+			}
+
+			args := &raft.ViewArgs{Id: id}
+			var response raft.ViewResponse
+			if err := client.Call("Raft.View", args, &response); err != nil {
+				log.Fatal(err)
+			}
+			fmt.Printf(response.Node)
+
+		case "setup":
+			if len(inputs) < 2 {
+				fmt.Println("usage: setup <count>")
+				continue
+			}
+
+			count_of_nodes, err := strconv.Atoi(inputs[1])
+			if err != nil {
+				fmt.Println("invalid node count:", err)
+				continue
+			}
+			if count_of_nodes > 5 {
+				log.Fatal("Cannot handle more than 5 nodes")
+			}
+
+			args := &raft.Args{Count: count_of_nodes}
+			var response raft.RaftResponse
+			if err := client.Call("Raft.Run", args, &response); err != nil {
+				log.Fatal(err)
+			}
+			fmt.Printf("Count of nodes running: %d\n", response.Count)
+		case "exit":
+			fmt.Println("Exiting program. Goodbye!")
+			return
+		case ":q":
+			fmt.Println("Exiting program. Goodbye!")
+			return
+		default:
+			fmt.Println("Unknown command. Try again.")
+		}
 	}
-	fmt.Printf("Count of nodes: %d\n", response.Count)
 }

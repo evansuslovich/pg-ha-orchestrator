@@ -43,8 +43,9 @@ type Node struct {
 	matchIndex []int
 	state      map[string]int
 
-	timer *time.Timer
-	nodes []Node
+	timer   *time.Timer
+	nodes   []Node
+	address string // TCP address
 }
 
 type EmptyArgs struct{}
@@ -54,7 +55,32 @@ type ViewResponse struct {
 }
 
 func (node *Node) View(args EmptyArgs, response *ViewResponse) error {
-	response.Node = fmt.Sprintf("name: %s\ntimeout: %d ms\nrole: %s\n\n", node.name, node.timeoutLength, node.role)
+	response.Node = fmt.Sprintf(
+		"==== Node %d (%s) ====\n"+
+			"address:      %s\n"+
+			"role:         %s\n"+
+			"timeout:      %d ms\n"+
+			"\n"+
+			"-- persistent state --\n"+
+			"currentTerm:  %d\n"+
+			"votedFor:     %d\n"+
+			"log:          %v\n"+
+			"\n"+
+			"-- volatile state --\n"+
+			"commitIndex:  %d\n"+
+			"lastApplied:  %d\n"+
+			"\n"+
+			"-- leader state --\n"+
+			"nextIndex:    %v\n"+
+			"matchIndex:   %v\n"+
+			"state:        %v\n"+
+			"========================\n",
+		node.id, node.name,
+		node.address, node.role, node.timeoutLength,
+		node.currentTerm, node.votedFor, node.log,
+		node.commitIndex, node.lastApplied,
+		node.nextIndex, node.matchIndex, node.state,
+	)
 	return nil
 }
 
@@ -64,7 +90,9 @@ type NodeArgs struct {
 	TimeoutLength int
 }
 
-func StartServer(args *NodeArgs) *Node {
+func StartServer(args *NodeArgs) (*Node, error) {
+	address := ":" + strconv.Itoa(1234+args.Id)
+
 	node := &Node{
 		id:            args.Id,
 		name:          args.Name,
@@ -72,21 +100,21 @@ func StartServer(args *NodeArgs) *Node {
 		timeoutLength: 100 + rand.N(args.TimeoutLength),
 		state:         make(map[string]int),
 		timer:         time.NewTimer(time.Millisecond),
+		address:       address,
 	}
 	server := rpc.NewServer()
 	server.Register(node)
 
 	// https://pkg.go.dev/net#Listen
-	address := ":" + strconv.Itoa(1234+args.Id)
 	l, err := net.Listen("tcp", address)
 	if err != nil {
-		errors.New("failed to spin up")
+		return nil, errors.New("failed to spin up: " + err.Error())
 	}
 
 	log.Printf("serving on %s", address)
 	// log.Fatal(http.Serve(l, nil))
 	go server.Accept(l)
-	return node
+	return node, nil
 }
 
 // func (server *Node) Run(wg *sync.WaitGroup) {
