@@ -23,3 +23,9 @@
  - benefits of `chan struct{}`
    - zero memory footprint: o bytes
    - clear code intent: tells the reader that data isn't passed, rather coordinating
+
+## LeaderElection RPC
+ - I'm curious if the Node should be aware of the other Nodes and the `main.go` function handles it
+ - main.go is more of a control plane than a participant in the protocol itself
+ - adding addresses (`addresses []string`)of other nodes as a field in Node's state
+   - address: string representing TCP address

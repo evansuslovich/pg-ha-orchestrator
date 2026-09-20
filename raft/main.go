@@ -54,11 +54,16 @@ func (raft *Raft) Build(args *Args, response *BuildResponse) error {
 	results := make(chan startResult, args.Count)
 	var startWg sync.WaitGroup
 
+	addresses := make([]string, args.Count)
+	for i := 0; i < args.Count; i++ {
+		addresses[i] = ":" + strconv.Itoa(1234+i+1)
+	}
+
 	for i := 0; i < args.Count; i++ {
 		startWg.Add(1)
 		go func(id int) {
 			defer startWg.Done()
-			node, err := StartServer(&NodeArgs{Id: id, Name: NumberToLetter(id), TimeoutLength: 2000})
+			node, err := StartServer(&NodeArgs{Id: id, Name: NumberToLetter(id), Addresses: addresses, TimeoutLength: 2000})
 
 			results <- startResult{node: node, err: err}
 		}(i + 1)

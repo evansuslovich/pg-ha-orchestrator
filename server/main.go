@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"log"
 	"net"
 	"net/http"
@@ -10,9 +11,15 @@ import (
 )
 
 func main() {
-	raft := new(raft.Raft)
+	var debug bool
+	flag.BoolVar(&debug, "debug", false, "enable debug logging")
+	flag.BoolVar(&debug, "d", false, "enable debug logging (shorthand)")
+	flag.Parse()
+	raft.Debug = debug
+
+	raftInstance := new(raft.Raft)
 	// Register: server registers an object, making it visible as a service with the name of the type of the object
-	rpc.Register(raft)
+	rpc.Register(raftInstance)
 	rpc.HandleHTTP()
 	// https://pkg.go.dev/net#Listen
 	l, err := net.Listen("tcp", ":1234")
