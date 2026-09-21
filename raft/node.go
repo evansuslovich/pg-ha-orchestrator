@@ -47,7 +47,6 @@ type Condition struct {
 
 type Node struct {
 	id               int
-	name             string
 	electionTimeout  int // milliseconds
 	heartbeatTimeout int // millseconds
 	role             Role
@@ -80,7 +79,7 @@ type ViewResponse struct {
 }
 
 func (node *Node) View(args EmptyArgs, response *ViewResponse) error {
-	response.Node = fmt.Sprintf(`===== Node %d (%s) =====
+	response.Node = fmt.Sprintf(`===== Node %d  =====
 address:           %s
 role:              %s
 condition:         %s
@@ -103,7 +102,7 @@ matchIndex:        %v
 data:             %v
 ========================
 `,
-		node.id, node.name,
+		node.id,
 		node.address, node.role, node.condition.state, node.electionTimeout, node.heartbeatTimeout, node.addresses,
 		node.currentTerm, node.votedFor, node.logs,
 		node.commitIndex, node.lastApplied,
@@ -114,7 +113,6 @@ data:             %v
 
 type NodeArgs struct {
 	Id              int
-	Name            string
 	Addresses       []string
 	ElectionTimeout int
 }
@@ -138,9 +136,8 @@ func StartServer(args *NodeArgs) (*Node, error) {
 
 	node := &Node{
 		id:               args.Id,
-		name:             args.Name,
 		electionTimeout:  1000 + rand.N(args.ElectionTimeout),
-		heartbeatTimeout: 250,
+		heartbeatTimeout: 999,
 		role:             Follower,
 		condition:        Condition{state: Fresh},
 		currentTerm:      1,
@@ -199,6 +196,8 @@ func (node *Node) RequestVote(candidate *RequestVoteArgs, response *RequestVoteR
 	if candidate.Term < node.currentTerm {
 		response.Term = node.currentTerm
 		response.VoteGranted = false
+		debugf("Node %d is rejecting Candidate %d due to stale terms", node.id, candidate.CandidateId)
+		debugf("Node %d's term: %d. Candidate %d term: %d", node.id, node.currentTerm, candidate.CandidateId, candidate.Term)
 		return nil
 	}
 
@@ -208,7 +207,7 @@ func (node *Node) RequestVote(candidate *RequestVoteArgs, response *RequestVoteR
 		node.role = Follower
 		node.votedFor = 0 // represents null
 	} else {
-		debugf("Candidate's (id: %d) term (%d) is less than node's (id: %d) term (%d)", candidate.CandidateId, candidate.Term, node.id, node.currentTerm)
+		debugf("Candidate's (id: %d) term (%d) is less than Node's (id: %d) term (%d)", candidate.CandidateId, candidate.Term, node.id, node.currentTerm)
 	}
 
 	myLastLogIndex := len(node.logs)
@@ -231,7 +230,7 @@ func (node *Node) RequestVote(candidate *RequestVoteArgs, response *RequestVoteR
 		// reset election timer
 		node.electionTimer.Reset(time.Duration(node.electionTimeout) * time.Millisecond)
 		response.VoteGranted = true
-		debugf("node %d voted for candidate %d", node.id, candidate.CandidateId)
+		debugf("Node %d voted for candidate %d", node.id, candidate.CandidateId)
 	}
 
 	return nil
@@ -390,17 +389,17 @@ func (node *Node) replicate() error {
 }
 
 func (node *Node) Run() {
-	fmt.Printf("%s starting \n", node.name)
-
-	node.Resume()
+	debugf("Node %d starting \n", node.id)
 
 	for {
 		// when heartbeat timer runs out, it always resets the electionTimer
-		node.electionTimer.Reset(time.Duration(node.electionTimeout) * time.Millisecond)
+
 		if node.condition.state == Paused {
-			fmt.Printf("node %s is Paused\n", node.name)
+			debugf("Node %d is paused\n", node.id)
 			return
 		}
+
+		node.electionTimer.Reset(time.Duration(node.electionTimeout) * time.Millisecond)
 
 		if node.role == Leader {
 			node.heartbeatTimer.Reset(time.Duration(node.heartbeatTimeout) * time.Millisecond)
@@ -408,25 +407,28 @@ func (node *Node) Run() {
 
 		select {
 		case <-node.electionTimer.C:
-			fmt.Printf("node %s elapsed electionTimeout: %d\n", node.name, node.electionTimeout)
+			debugf("Node %d elapsed electionTimeout: %d\n", node.id, node.electionTimeout)
 			node.startElection()
 		case <-node.heartbeatTimer.C:
-			fmt.Printf("node %s heartbeat timer: %d\n", node.name, node.heartbeatTimeout)
+			debugf("Node %d heartbeat timer: %d\n", node.id, node.heartbeatTimeout)
 			node.replicate()
 		}
 	}
 }
 
 func (node *Node) Pause() {
+	debugf("Node %d paused", node.id)
 	node.condition.mu.Lock()
 	defer node.condition.mu.Unlock()
 	node.condition.state = Paused
 }
 
 func (node *Node) Resume() {
+	debugf("Node %d resuming", node.id)
 	node.condition.mu.Lock()
 	defer node.condition.mu.Unlock()
 	node.condition.state = Running
+	go node.Run()
 	// resuming a leader
 	// resuming a follower
 	// resuming a candidate

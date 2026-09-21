@@ -31,6 +31,7 @@
 ## Elections
 - [ x ] Contact node-node via RPC to request votes
     - [ x ] Parallelize RPC calls
+    - [ ] If AppendEntries RPC received from new leader: convert to follower
 
 ## Heartbeat
 - [ x ] Figure out a heartbeat timeout

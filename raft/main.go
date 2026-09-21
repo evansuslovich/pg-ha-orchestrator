@@ -22,14 +22,6 @@ type Response struct {
 	Value string
 }
 
-func NumberToLetter(n int) string {
-	if n < 1 || n > 26 {
-		return "Invalid (Out of A-Z range)"
-	}
-	// 'A' is 65 in ASCII. If n=1: 65 + 1 - 1 = 65 ('A')
-	return string(rune('A' + n - 1))
-}
-
 type RunArgs struct{}
 
 type RunResponse struct{}
@@ -62,7 +54,7 @@ func (raft *Raft) Build(args *Args, response *BuildResponse) error {
 		startWg.Add(1)
 		go func(id int) {
 			defer startWg.Done()
-			node, err := StartServer(&NodeArgs{Id: id, Name: NumberToLetter(id), Addresses: addresses, ElectionTimeout: 5000})
+			node, err := StartServer(&NodeArgs{Id: id, Addresses: addresses, ElectionTimeout: 5000})
 
 			results <- buildResult{node: node, err: err}
 		}(i + 1)
@@ -75,7 +67,7 @@ func (raft *Raft) Build(args *Args, response *BuildResponse) error {
 
 	for res := range results {
 		if res.err != nil {
-			return errors.New("encountered error starting a node: " + res.err.Error())
+			return errors.New("Encountered error starting a node: " + res.err.Error())
 		}
 
 		raft.Count += 1
@@ -136,6 +128,6 @@ func (raft *Raft) Resume(args *ViewArgs, response *Response) error {
 	}
 
 	raft.Nodes[index].Resume()
-	response.Value = "resume node " + strconv.Itoa(args.Id)
+	response.Value = "Resume node " + strconv.Itoa(args.Id)
 	return nil
 }
