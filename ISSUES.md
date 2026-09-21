@@ -29,3 +29,9 @@
  - main.go is more of a control plane than a participant in the protocol itself
  - adding addresses (`addresses []string`)of other nodes as a field in Node's state
    - address: string representing TCP address
+
+## Heartbeat Timer
+ - Similiar to electionTimer, heartbeatTimer runs on a shorter time length
+ - Only start the timer when a node is a `Leader`
+ - The issue I faced was with the heartbeatTimer, since heartbeatTimeout < electionTimeout
+   - upon each iteration of heartbeatTimer, `Reset` is called on `node.electionTimer`

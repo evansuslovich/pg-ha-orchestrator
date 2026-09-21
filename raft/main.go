@@ -62,7 +62,7 @@ func (raft *Raft) Build(args *Args, response *BuildResponse) error {
 		startWg.Add(1)
 		go func(id int) {
 			defer startWg.Done()
-			node, err := StartServer(&NodeArgs{Id: id, Name: NumberToLetter(id), Addresses: addresses, TimeoutLength: 5000})
+			node, err := StartServer(&NodeArgs{Id: id, Name: NumberToLetter(id), Addresses: addresses, ElectionTimeout: 5000})
 
 			results <- buildResult{node: node, err: err}
 		}(i + 1)

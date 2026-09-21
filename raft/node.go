@@ -29,10 +29,11 @@ type LogEntry struct {
 }
 
 type Node struct {
-	id            int
-	name          string
-	timeoutLength int // milliseconds
-	role          Role
+	id               int
+	name             string
+	electionTimeout  int // milliseconds
+	heartbeatTimeout int // millseconds
+	role             Role
 
 	// persistent state on all servers
 	currentTerm int
@@ -48,10 +49,11 @@ type Node struct {
 	matchIndex []int
 	state      map[string]int
 
-	timer     *time.Timer
-	address   string // TCP address
-	stop      chan struct{}
-	addresses []string // other node addresses
+	electionTimer  *time.Timer
+	heartbeatTimer *time.Timer
+	address        string // TCP address
+	stop           chan struct{}
+	addresses      []string // other node addresses
 }
 
 type EmptyArgs struct{}
@@ -61,29 +63,30 @@ type ViewResponse struct {
 }
 
 func (node *Node) View(args EmptyArgs, response *ViewResponse) error {
-	response.Node = fmt.Sprintf(
-		"==== Node %d (%s) ====\n"+
-			"address:      %s\n"+
-			"role:         %s\n"+
-			"timeout:      %d ms\n"+
-			"addresses:    %q\n"+
-			"\n"+
-			"-- persistent state --\n"+
-			"currentTerm:  %d\n"+
-			"votedFor:     %d\n"+
-			"logs:          %v\n"+
-			"\n"+
-			"-- volatile state --\n"+
-			"commitIndex:  %d\n"+
-			"lastApplied:  %d\n"+
-			"\n"+
-			"-- leader state --\n"+
-			"nextIndex:    %v\n"+
-			"matchIndex:   %v\n"+
-			"state:        %v\n"+
-			"========================\n",
+	response.Node = fmt.Sprintf(`===== Node %d (%s) =====
+address:           %s
+role:              %s
+electionTimeout:   %d ms
+heartbeatTimeout:  %d ms
+addresses:         %q
+
+-- persistent state --
+currentTerm:       %d
+votedFor:          %d
+logs:              %v
+
+-- volatile state --
+commitIndex:       %d
+lastApplied:       %d
+
+-- leader state --
+nextIndex:         %v
+matchIndex:        %v
+state:             %v
+========================
+`,
 		node.id, node.name,
-		node.address, node.role, node.timeoutLength, node.addresses,
+		node.address, node.role, node.electionTimeout, node.heartbeatTimeout, node.addresses,
 		node.currentTerm, node.votedFor, node.logs,
 		node.commitIndex, node.lastApplied,
 		node.nextIndex, node.matchIndex, node.state,
@@ -92,10 +95,10 @@ func (node *Node) View(args EmptyArgs, response *ViewResponse) error {
 }
 
 type NodeArgs struct {
-	Id            int
-	Name          string
-	Addresses     []string
-	TimeoutLength int
+	Id              int
+	Name            string
+	Addresses       []string
+	ElectionTimeout int
 }
 
 func getAddressInfo(args *NodeArgs) (string, []string) {
@@ -116,17 +119,25 @@ func StartServer(args *NodeArgs) (*Node, error) {
 	debugf("this address: %s . other_addresses: %q\n", this_address, other_addresses)
 
 	node := &Node{
-		id:            args.Id,
-		name:          args.Name,
-		timeoutLength: 1000 + rand.N(args.TimeoutLength),
-		role:          Follower,
-		currentTerm:   1,
-		state:         make(map[string]int),
-		timer:         time.NewTimer(time.Millisecond),
-		address:       this_address,
-		addresses:     other_addresses,
-		stop:          make(chan struct{}),
+		id:               args.Id,
+		name:             args.Name,
+		electionTimeout:  1000 + rand.N(args.ElectionTimeout),
+		heartbeatTimeout: 250,
+		role:             Follower,
+		currentTerm:      1,
+		state:            make(map[string]int),
+		electionTimer:    time.NewTimer(time.Millisecond),
+		heartbeatTimer:   time.NewTimer(time.Millisecond),
+		address:          this_address,
+		addresses:        other_addresses,
+		stop:             make(chan struct{}),
 	}
+
+	// stop the heartbeat timer off the bat, this only runs for a the leader
+	if !node.heartbeatTimer.Stop() {
+		<-node.heartbeatTimer.C
+	}
+
 	server := rpc.NewServer()
 	server.Register(node)
 
@@ -196,7 +207,7 @@ func (node *Node) RequestVote(candidate *RequestVoteArgs, response *RequestVoteR
 	if canVote {
 		node.votedFor = candidate.CandidateId
 		// reset election timer
-		node.timer.Reset(time.Duration(node.timeoutLength) * time.Millisecond)
+		node.electionTimer.Reset(time.Duration(node.electionTimeout) * time.Millisecond)
 		response.VoteGranted = true
 		debugf("node %d voted for candidate %d", node.id, candidate.CandidateId)
 	}
@@ -281,20 +292,99 @@ func (node *Node) startElection() error {
 	return nil
 }
 
+type AppendEntriesArgs struct {
+	Term         int        // leader's term
+	LeaderId     int        // so follower can redirect clients
+	PrevLogIndex int        // index of log entry immediately preceding new ones
+	PrevLogTerm  int        // term of previous log entry
+	Entries      []LogEntry // log entries to store (empty for heartbeat; may send more than one for efficiency)
+	LeaderCommit int        // leader's commitIndex
+}
+
+type AppendEntriesResponse struct {
+	Term    int  // currentTerm, for leader to update itself
+	Success bool // true if follower contained entry matching prevLogIndex and prevLogTerm
+}
+
+type appendEntriesResult struct {
+	replicateResult AppendEntriesResponse
+	err             error
+}
+
+func (node *Node) AppendEntries(leader *AppendEntriesArgs, response *AppendEntriesResponse) error {
+	debugf("Node %d received heartbeat / append entries from Node %d", node.id, leader.LeaderId)
+	node.electionTimer.Reset(time.Duration(node.electionTimeout) * time.Millisecond)
+	return nil
+}
+
+func (node *Node) replicate() error {
+	debugf("Node %d is replicating", node.id)
+
+	// contact all nodes
+	appendEntriesArgs := &AppendEntriesArgs{
+		Term:         node.currentTerm,
+		LeaderId:     node.id,
+		PrevLogIndex: len(node.logs),
+		PrevLogTerm:  node.LastLogTerm(),
+		Entries:      node.logs,
+		LeaderCommit: node.commitIndex,
+	}
+
+	results := make(chan appendEntriesResult, len(node.addresses))
+	var startWg sync.WaitGroup
+
+	for i := 0; i < len(node.addresses); i++ {
+		startWg.Add(1)
+
+		go func(id int) {
+			defer startWg.Done()
+
+			client, err := rpc.Dial("tcp", node.addresses[i])
+			if err != nil {
+				log.Fatal("dialing:", err)
+			}
+
+			var response AppendEntriesResponse
+			if err := client.Call("Node.AppendEntries", appendEntriesArgs, &response); err != nil {
+				log.Fatal("raft error:", err)
+			}
+
+			results <- appendEntriesResult{replicateResult: response, err: err}
+		}(i + 1)
+	}
+
+	go func() {
+		startWg.Wait()
+		close(results)
+	}()
+
+	for res := range results {
+		if res.err != nil {
+			return errors.New("encountered an error in replicating: " + res.err.Error())
+		}
+	}
+	return nil
+}
+
 func (node *Node) Run() {
 	fmt.Printf("%s starting \n", node.name)
 	node.stop = make(chan struct{})
-	for {
-		start := time.Now()
-		node.timer.Reset(time.Duration(node.timeoutLength) * time.Millisecond)
 
+	for {
+		// when heartbeat timer runs out, it always resets the electionTimer
+		node.electionTimer.Reset(time.Duration(node.electionTimeout) * time.Millisecond)
+		if node.role == Leader {
+			node.heartbeatTimer.Reset(time.Duration(node.heartbeatTimeout) * time.Millisecond)
+		}
 		select {
-		case <-node.timer.C:
-			elapsed := time.Since(start)
-			fmt.Printf("%s elapsed for %s timeoutLength: %d\n", elapsed, node.name, node.timeoutLength)
+		case <-node.electionTimer.C:
+			fmt.Printf("node %s elapsed electionTimeout: %d\n", node.name, node.electionTimeout)
 			node.startElection()
+		case <-node.heartbeatTimer.C:
+			fmt.Printf("node %s heartbeat timer: %d\n", node.name, node.heartbeatTimeout)
+			node.replicate()
 		case <-node.stop:
-			fmt.Printf("%s stopping\n", node.name)
+			fmt.Printf("node %s stopping\n", node.name)
 			return
 		}
 	}

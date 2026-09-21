@@ -33,6 +33,14 @@
     - [ x ] Parallelize RPC calls
 
 ## Heartbeat
-- [ ] Figure out a heartbeat timeout
-- [ ] Once a leader is elected, send out heartbeats 
-  - Parallelize RPC calls
+- [ x ] Figure out a heartbeat timeout
+- [ x ] Once a leader is elected, send out heartbeats
+  - [ x ] Parallelize RPC calls
+
+
+## Refactor
+- [ ] Determing naming convetion from the "server" and the "client" call
+   - [ ] replicate - AppendEntires
+   - [ ] startElection - RequestVote
+- [ ] Reusable function for parallizing a RPC call
+   - [ ] clean up replicate() and startElection()
