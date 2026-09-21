@@ -114,7 +114,7 @@ func (raft *Raft) View(args *ViewArgs, response *ViewResponse) error {
 	return nil
 }
 
-func (raft *Raft) Stop(args *ViewArgs, response *Response) error {
+func (raft *Raft) Pause(args *ViewArgs, response *Response) error {
 	index := slices.IndexFunc(raft.Nodes, func(n *Node) bool {
 		return n.id == args.Id
 	})
@@ -122,7 +122,20 @@ func (raft *Raft) Stop(args *ViewArgs, response *Response) error {
 		return errors.New("Node id: " + strconv.Itoa(args.Id) + " not found")
 	}
 
-	raft.Nodes[index].Stop()
-	response.Value = "stopped node " + strconv.Itoa(args.Id)
+	raft.Nodes[index].Pause()
+	response.Value = "paused node " + strconv.Itoa(args.Id)
+	return nil
+}
+
+func (raft *Raft) Resume(args *ViewArgs, response *Response) error {
+	index := slices.IndexFunc(raft.Nodes, func(n *Node) bool {
+		return n.id == args.Id
+	})
+	if index == -1 {
+		return errors.New("Node id: " + strconv.Itoa(args.Id) + " not found")
+	}
+
+	raft.Nodes[index].Resume()
+	response.Value = "resume node " + strconv.Itoa(args.Id)
 	return nil
 }

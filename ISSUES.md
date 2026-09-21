@@ -35,3 +35,11 @@
  - Only start the timer when a node is a `Leader`
  - The issue I faced was with the heartbeatTimer, since heartbeatTimeout < electionTimeout
    - upon each iteration of heartbeatTimer, `Reset` is called on `node.electionTimer`
+
+## Node Condition
+ - A node can be in any of the three states:
+   - running
+   - paused
+   - fresh (recently built)
+ - Our initial use of `char struct{}` has hit its limit because we now need to transfer data
+   - Our Condition type also includes a sync.Mutex

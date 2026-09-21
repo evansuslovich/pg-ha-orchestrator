@@ -2,10 +2,12 @@
 # MVP
 
 ## What can the Client do?
- - the client can build Nodes
- - the client can view the content of a Node
- - the client can request state 
- - the client can adjust the state 
+ - can build Nodes
+ - can request state
+ - can view a Node
+ - can pause a Node
+ - can resume a Node
+ - can adjust the state
      - (i.e SET X = 3)
 ## What does the Server do?
  - initialize `raft/main.go` the orchestrator

@@ -61,9 +61,9 @@ func main() {
 			if err := client.Call("Raft.Run", args, &response); err != nil {
 				log.Fatal(err)
 			}
-		case "stop":
+		case "pause":
 			if len(inputs) < 2 {
-				fmt.Println("usage: stop <id>")
+				fmt.Println("usage: pause <id>")
 				continue
 			}
 
@@ -79,7 +79,30 @@ func main() {
 
 			args := &raft.ViewArgs{Id: id}
 			var response raft.Response
-			if err := client.Call("Raft.Stop", args, &response); err != nil {
+			if err := client.Call("Raft.Pause", args, &response); err != nil {
+				log.Fatal(err)
+			}
+			fmt.Println(response.Value)
+
+		case "resume":
+			if len(inputs) < 2 {
+				fmt.Println("usage: resume <id>")
+				continue
+			}
+
+			id, err := strconv.Atoi(inputs[1])
+			if id < 1 {
+				fmt.Println("Non-positive id:", strconv.Itoa(id))
+				continue
+			}
+			if err != nil {
+				fmt.Println("invalid node id:", err)
+				continue
+			}
+
+			args := &raft.ViewArgs{Id: id}
+			var response raft.Response
+			if err := client.Call("Raft.Resume", args, &response); err != nil {
 				log.Fatal(err)
 			}
 			fmt.Println(response.Value)
@@ -109,7 +132,7 @@ func main() {
 		case "help":
 			fmt.Println("build <count>     build <n> number nodes")
 			fmt.Println("select <id>       view state of a node")
-			fmt.Println("stop <id>         pause node")
+			fmt.Println("pause <id>        pause node")
 			fmt.Println("run               run nodes")
 			fmt.Println("exit              exit application")
 		case "exit":

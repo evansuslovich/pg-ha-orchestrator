@@ -15,9 +15,9 @@
  - [ x ] build system with N Nodes,
  - [ x ] start all nodes
  - [ x ] view node's state (i.e select * from nodes where pk = id)
- - [ x ] stop node from running
+ - [ x ] pause node while running
+ - [ ] weird condition: resume node while running
  - [ x ] help command
-
 
 ## GUI
 - [ ] It'd be neat to get a GUI for the sake of visualization 

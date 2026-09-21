@@ -28,12 +28,30 @@ type LogEntry struct {
 	Command string
 }
 
+type NodeState int
+
+const (
+	Running NodeState = iota // 0
+	Paused                   // 1
+	Fresh                    // 2
+)
+
+func (s NodeState) String() string {
+	return [...]string{"Running", "Paused", "Fresh"}[s]
+}
+
+type Condition struct {
+	mu    sync.Mutex
+	state NodeState
+}
+
 type Node struct {
 	id               int
 	name             string
 	electionTimeout  int // milliseconds
 	heartbeatTimeout int // millseconds
 	role             Role
+	condition        Condition
 
 	// persistent state on all servers
 	currentTerm int
@@ -47,12 +65,11 @@ type Node struct {
 	// volatile state on leaders
 	nextIndex  []int
 	matchIndex []int
-	state      map[string]int
+	data       map[string]int
 
 	electionTimer  *time.Timer
 	heartbeatTimer *time.Timer
-	address        string // TCP address
-	stop           chan struct{}
+	address        string   // TCP address
 	addresses      []string // other node addresses
 }
 
@@ -66,6 +83,7 @@ func (node *Node) View(args EmptyArgs, response *ViewResponse) error {
 	response.Node = fmt.Sprintf(`===== Node %d (%s) =====
 address:           %s
 role:              %s
+condition:         %s
 electionTimeout:   %d ms
 heartbeatTimeout:  %d ms
 addresses:         %q
@@ -82,14 +100,14 @@ lastApplied:       %d
 -- leader state --
 nextIndex:         %v
 matchIndex:        %v
-state:             %v
+data:             %v
 ========================
 `,
 		node.id, node.name,
-		node.address, node.role, node.electionTimeout, node.heartbeatTimeout, node.addresses,
+		node.address, node.role, node.condition.state, node.electionTimeout, node.heartbeatTimeout, node.addresses,
 		node.currentTerm, node.votedFor, node.logs,
 		node.commitIndex, node.lastApplied,
-		node.nextIndex, node.matchIndex, node.state,
+		node.nextIndex, node.matchIndex, node.data,
 	)
 	return nil
 }
@@ -124,13 +142,12 @@ func StartServer(args *NodeArgs) (*Node, error) {
 		electionTimeout:  1000 + rand.N(args.ElectionTimeout),
 		heartbeatTimeout: 250,
 		role:             Follower,
+		condition:        Condition{state: Fresh},
 		currentTerm:      1,
-		state:            make(map[string]int),
 		electionTimer:    time.NewTimer(time.Millisecond),
 		heartbeatTimer:   time.NewTimer(time.Millisecond),
 		address:          this_address,
 		addresses:        other_addresses,
-		stop:             make(chan struct{}),
 	}
 
 	// stop the heartbeat timer off the bat, this only runs for a the leader
@@ -173,6 +190,11 @@ func (node *Node) LastLogTerm() int {
 }
 
 func (node *Node) RequestVote(candidate *RequestVoteArgs, response *RequestVoteResponse) error {
+	if node.condition.state == Paused {
+		debugf("Node %d is paused", node.id)
+		return nil
+	}
+
 	// reject if candidate's term is old
 	if candidate.Term < node.currentTerm {
 		response.Term = node.currentTerm
@@ -214,9 +236,6 @@ func (node *Node) RequestVote(candidate *RequestVoteArgs, response *RequestVoteR
 
 	return nil
 }
-
-// If a follower receives no communication over a period of time (electionTimeout)
-// then it assumes there is no viable leader and begins an election
 
 type requestVoteResult struct {
 	electionResult RequestVoteResponse
@@ -312,6 +331,10 @@ type appendEntriesResult struct {
 }
 
 func (node *Node) AppendEntries(leader *AppendEntriesArgs, response *AppendEntriesResponse) error {
+	if node.condition.state == Paused {
+		debugf("Node %d is paused", node.id)
+		return nil
+	}
 	debugf("Node %d received heartbeat / append entries from Node %d", node.id, leader.LeaderId)
 	node.electionTimer.Reset(time.Duration(node.electionTimeout) * time.Millisecond)
 	return nil
@@ -368,14 +391,21 @@ func (node *Node) replicate() error {
 
 func (node *Node) Run() {
 	fmt.Printf("%s starting \n", node.name)
-	node.stop = make(chan struct{})
+
+	node.Resume()
 
 	for {
 		// when heartbeat timer runs out, it always resets the electionTimer
 		node.electionTimer.Reset(time.Duration(node.electionTimeout) * time.Millisecond)
+		if node.condition.state == Paused {
+			fmt.Printf("node %s is Paused\n", node.name)
+			return
+		}
+
 		if node.role == Leader {
 			node.heartbeatTimer.Reset(time.Duration(node.heartbeatTimeout) * time.Millisecond)
 		}
+
 		select {
 		case <-node.electionTimer.C:
 			fmt.Printf("node %s elapsed electionTimeout: %d\n", node.name, node.electionTimeout)
@@ -383,13 +413,21 @@ func (node *Node) Run() {
 		case <-node.heartbeatTimer.C:
 			fmt.Printf("node %s heartbeat timer: %d\n", node.name, node.heartbeatTimeout)
 			node.replicate()
-		case <-node.stop:
-			fmt.Printf("node %s stopping\n", node.name)
-			return
 		}
 	}
 }
 
-func (node *Node) Stop() {
-	close(node.stop)
+func (node *Node) Pause() {
+	node.condition.mu.Lock()
+	defer node.condition.mu.Unlock()
+	node.condition.state = Paused
+}
+
+func (node *Node) Resume() {
+	node.condition.mu.Lock()
+	defer node.condition.mu.Unlock()
+	node.condition.state = Running
+	// resuming a leader
+	// resuming a follower
+	// resuming a candidate
 }
