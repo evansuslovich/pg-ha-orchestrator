@@ -41,7 +41,7 @@ func (raft *Raft) Run(args *Args, response *RunResponse) error {
 	return nil
 }
 
-type startResult struct {
+type buildResult struct {
 	node *Node
 	err  error
 }
@@ -51,7 +51,7 @@ type BuildResponse struct {
 
 func (raft *Raft) Build(args *Args, response *BuildResponse) error {
 
-	results := make(chan startResult, args.Count)
+	results := make(chan buildResult, args.Count)
 	var startWg sync.WaitGroup
 
 	addresses := make([]string, args.Count)
@@ -65,7 +65,7 @@ func (raft *Raft) Build(args *Args, response *BuildResponse) error {
 			defer startWg.Done()
 			node, err := StartServer(&NodeArgs{Id: id, Name: NumberToLetter(id), Addresses: addresses, TimeoutLength: 8000})
 
-			results <- startResult{node: node, err: err}
+			results <- buildResult{node: node, err: err}
 		}(i + 1)
 	}
 
