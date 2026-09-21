@@ -12,10 +12,11 @@
 
 ## TUI
 - [ ] Take inputs from user to:
- - [ ] build system with N Nodes,
- - [ ] start all nodes
- - [ ] view node's state (i.e select * from nodes where pk = id)
- - [ ] stop node from running
+ - [ x ] build system with N Nodes,
+ - [ x ] start all nodes
+ - [ x ] view node's state (i.e select * from nodes where pk = id)
+ - [ x ] stop node from running
+ - [ x ] help command
 
 
 ## GUI
@@ -26,4 +27,12 @@
 
 ## RPC + Golang + Context
 - [ x ] Get an idea of RPC + HTTP server
-- [ ]  Contact other Nodes from One Node via RPC
+
+## Elections
+- [ x ] Contact node-node via RPC to request votes
+    - [ x ] Parallelize RPC calls
+
+## Heartbeat
+- [ ] Figure out a heartbeat timeout
+- [ ] Once a leader is elected, send out heartbeats 
+  - Parallelize RPC calls

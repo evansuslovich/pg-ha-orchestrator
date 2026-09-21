@@ -7,6 +7,7 @@ import (
 	"math/rand/v2"
 	"net"
 	"net/rpc"
+	"sync"
 	"time"
 )
 
@@ -117,7 +118,7 @@ func StartServer(args *NodeArgs) (*Node, error) {
 	node := &Node{
 		id:            args.Id,
 		name:          args.Name,
-		timeoutLength: 5000 + rand.N(args.TimeoutLength),
+		timeoutLength: 1000 + rand.N(args.TimeoutLength),
 		role:          Follower,
 		currentTerm:   1,
 		state:         make(map[string]int),
@@ -140,14 +141,14 @@ func StartServer(args *NodeArgs) (*Node, error) {
 	return node, nil
 }
 
-type StartElectionArgs struct {
+type RequestVoteArgs struct {
 	Term         int // candidate's term
 	CandidateId  int // candidate requesting vote
 	LastLogIndex int // index of candidate's last log
 	LastLogTerm  int // term of candidate's last log entry
 }
 
-type StartElectionResponse struct {
+type RequestVoteResponse struct {
 	Term        int  // currentTerm, for candidate to update itself
 	VoteGranted bool // true means candidate received vote
 }
@@ -160,7 +161,7 @@ func (node *Node) LastLogTerm() int {
 	return lastLogTerm
 }
 
-func (node *Node) StartElection(candidate *StartElectionArgs, response *StartElectionResponse) error {
+func (node *Node) RequestVote(candidate *RequestVoteArgs, response *RequestVoteResponse) error {
 	// reject if candidate's term is old
 	if candidate.Term < node.currentTerm {
 		response.Term = node.currentTerm
@@ -170,10 +171,11 @@ func (node *Node) StartElection(candidate *StartElectionArgs, response *StartEle
 
 	// update node and make a Follower
 	if candidate.Term > node.currentTerm {
-		debugf("Candidate's (id: %d) term (%d)  is greater than node's (id: %d) ter (%d)", candidate.CandidateId, candidate.Term, node.id, node.currentTerm)
 		node.currentTerm = candidate.Term
 		node.role = Follower
 		node.votedFor = 0 // represents null
+	} else {
+		debugf("Candidate's (id: %d) term (%d) is less than node's (id: %d) term (%d)", candidate.CandidateId, candidate.Term, node.id, node.currentTerm)
 	}
 
 	myLastLogIndex := len(node.logs)
@@ -196,7 +198,7 @@ func (node *Node) StartElection(candidate *StartElectionArgs, response *StartEle
 		// reset election timer
 		node.timer.Reset(time.Duration(node.timeoutLength) * time.Millisecond)
 		response.VoteGranted = true
-		debugf("Node id: %d is voting for Candidate id: %d", node.id, candidate.CandidateId)
+		debugf("node %d voted for candidate %d", node.id, candidate.CandidateId)
 	}
 
 	return nil
@@ -204,34 +206,67 @@ func (node *Node) StartElection(candidate *StartElectionArgs, response *StartEle
 
 // If a follower receives no communication over a period of time (electionTimeout)
 // then it assumes there is no viable leader and begins an election
-func (node *Node) beginElection() {
+
+type requestVoteResult struct {
+	electionResult RequestVoteResponse
+	err            error
+}
+
+func (node *Node) startElection() error {
+	debugf("Node %d is starting an election", node.id)
 	node.currentTerm += 1
 	node.role = Candidate
 	node.votedFor = node.id
 
 	// contact all nodes
-	startElectionArgs := &StartElectionArgs{
+	requestVoteArgs := &RequestVoteArgs{
 		Term:         node.currentTerm,
 		CandidateId:  node.id,
 		LastLogIndex: len(node.logs),
 		LastLogTerm:  node.LastLogTerm(),
 	}
 
-	// response to original sender
-	var response StartElectionResponse
+	results := make(chan requestVoteResult, len(node.addresses))
+	var startWg sync.WaitGroup
+
+	for i := 0; i < len(node.addresses); i++ {
+		startWg.Add(1)
+
+		go func(id int) {
+			defer startWg.Done()
+
+			client, err := rpc.Dial("tcp", node.addresses[i])
+			if err != nil {
+				log.Fatal("dialing:", err)
+			}
+
+			var response RequestVoteResponse
+			if err := client.Call("Node.RequestVote", requestVoteArgs, &response); err != nil {
+				log.Fatal("raft error:", err)
+			}
+
+			results <- requestVoteResult{electionResult: response, err: err}
+		}(i + 1)
+	}
+
+	go func() {
+		startWg.Wait()
+		close(results)
+	}()
+
 	vote_count := 1
-	for _, address := range node.addresses {
-		client, err := rpc.Dial("tcp", address)
-		if err != nil {
-			log.Fatal("dialing:", err)
+
+	for res := range results {
+		if res.err != nil {
+			return errors.New("encountered an error in starting an election: " + res.err.Error())
 		}
 
-		if err := client.Call("Node.StartElection", startElectionArgs, &response); err != nil {
-			log.Fatal("raft error:", err)
-		}
-
-		if response.VoteGranted {
+		if res.electionResult.VoteGranted {
 			vote_count += 1
+		}
+
+		if node.currentTerm < res.electionResult.Term {
+			node.currentTerm = res.electionResult.Term
 		}
 	}
 
@@ -240,8 +275,10 @@ func (node *Node) beginElection() {
 	majority := population/2 + 1
 	if vote_count >= majority {
 		node.role = Leader
-		debugf("Node %s won the election", node.name)
+		debugf("Node %d won the election", node.id)
 	}
+
+	return nil
 }
 
 func (node *Node) Run() {
@@ -255,7 +292,7 @@ func (node *Node) Run() {
 		case <-node.timer.C:
 			elapsed := time.Since(start)
 			fmt.Printf("%s elapsed for %s timeoutLength: %d\n", elapsed, node.name, node.timeoutLength)
-			node.beginElection()
+			node.startElection()
 		case <-node.stop:
 			fmt.Printf("%s stopping\n", node.name)
 			return
