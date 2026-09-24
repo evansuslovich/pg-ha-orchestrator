@@ -196,8 +196,9 @@ func (node *Node) RequestVote(candidate *RequestVoteArgs, response *RequestVoteR
 	if candidate.Term < node.currentTerm {
 		response.Term = node.currentTerm
 		response.VoteGranted = false
+
 		debugf("Node %d is rejecting Candidate %d due to stale terms", node.id, candidate.CandidateId)
-		debugf("Node %d's term: %d. Candidate %d term: %d", node.id, node.currentTerm, candidate.CandidateId, candidate.Term)
+		debugf("Node %d's term: %d > Candidate %d term: %d", node.id, node.currentTerm, candidate.CandidateId, candidate.Term)
 		return nil
 	}
 
@@ -207,7 +208,7 @@ func (node *Node) RequestVote(candidate *RequestVoteArgs, response *RequestVoteR
 		node.role = Follower
 		node.votedFor = 0 // represents null
 	} else {
-		debugf("Candidate's (id: %d) term (%d) is less than Node's (id: %d) term (%d)", candidate.CandidateId, candidate.Term, node.id, node.currentTerm)
+		debugf("[Stale Candidate] Node %d term: %d < Candidate %d term %d", node.id, node.currentTerm, candidate.CandidateId, candidate.Term)
 	}
 
 	myLastLogIndex := len(node.logs)
@@ -305,6 +306,7 @@ func (node *Node) startElection() error {
 	if vote_count >= majority {
 		node.role = Leader
 		debugf("Node %d won the election", node.id)
+		node.replicate()
 	}
 
 	return nil
@@ -334,7 +336,35 @@ func (node *Node) AppendEntries(leader *AppendEntriesArgs, response *AppendEntri
 		debugf("Node %d is paused", node.id)
 		return nil
 	}
-	debugf("Node %d received heartbeat / append entries from Node %d", node.id, leader.LeaderId)
+
+	// stale leader AppendEntries
+	if leader.Term < node.currentTerm {
+		response.Term = node.currentTerm
+		response.Success = false
+
+		debugf("[Stale Leader] Node %d term: %d > Leader %d term %d", node.id, node.currentTerm, leader.LeaderId, leader.Term)
+		return nil
+	}
+
+	// If RPC request or response contains term T > currentTerm:
+	// set currentTerm = T, convert to follower
+	// stale Node
+	if leader.Term > node.currentTerm {
+		debugf("[Stale Node] Node %d term: %d < Leader %d term %d", node.id, node.currentTerm, leader.LeaderId, leader.Term)
+		node.currentTerm = leader.Term
+		node.role = Follower
+		node.votedFor = 0 // represents null
+		return nil
+
+	}
+
+	// if the current node is in a candidate position and we receive an AppendEntries from a new leader
+	if node.role == Candidate {
+		node.role = Follower
+		return nil
+	}
+
+	debugf("Node %d received heartbeat from Node %d", node.id, leader.LeaderId)
 	node.electionTimer.Reset(time.Duration(node.electionTimeout) * time.Millisecond)
 	return nil
 }
@@ -384,12 +414,16 @@ func (node *Node) replicate() error {
 		if res.err != nil {
 			return errors.New("encountered an error in replicating: " + res.err.Error())
 		}
+		// not necessary?
+		if node.currentTerm < res.replicateResult.Term {
+			node.currentTerm = res.replicateResult.Term
+		}
 	}
 	return nil
 }
 
 func (node *Node) Run() {
-	debugf("Node %d starting \n", node.id)
+	debugf("Node %d running\n", node.id)
 
 	for {
 		// when heartbeat timer runs out, it always resets the electionTimer
@@ -417,7 +451,7 @@ func (node *Node) Run() {
 }
 
 func (node *Node) Pause() {
-	debugf("Node %d paused", node.id)
+	debugf("Node %d pausing", node.id)
 	node.condition.mu.Lock()
 	defer node.condition.mu.Unlock()
 	node.condition.state = Paused
