@@ -41,8 +41,9 @@ func (s NodeState) String() string {
 }
 
 type Condition struct {
-	mu    sync.Mutex
-	state NodeState
+	mu      sync.Mutex
+	state   NodeState
+	pauseCh chan struct{} // closed the instant Pause() is called, wakes a blocked Run()
 }
 
 type Node struct {
@@ -139,7 +140,7 @@ func StartServer(args *NodeArgs) (*Node, error) {
 		electionTimeout:  1000 + rand.N(args.ElectionTimeout),
 		heartbeatTimeout: 999,
 		role:             Follower,
-		condition:        Condition{state: Fresh},
+		condition:        Condition{state: Fresh, pauseCh: make(chan struct{})},
 		currentTerm:      1,
 		electionTimer:    time.NewTimer(time.Millisecond),
 		heartbeatTimer:   time.NewTimer(time.Millisecond),
@@ -207,6 +208,7 @@ func (node *Node) RequestVote(candidate *RequestVoteArgs, response *RequestVoteR
 		node.currentTerm = candidate.Term
 		node.role = Follower
 		node.votedFor = 0 // represents null
+		node.heartbeatTimer.Stop()
 	} else {
 		debugf("[Stale Candidate] Node %d term: %d < Candidate %d term %d", node.id, node.currentTerm, candidate.CandidateId, candidate.Term)
 	}
@@ -341,8 +343,7 @@ func (node *Node) AppendEntries(leader *AppendEntriesArgs, response *AppendEntri
 	if leader.Term < node.currentTerm {
 		response.Term = node.currentTerm
 		response.Success = false
-
-		debugf("[Stale Leader] Node %d term: %d > Leader %d term %d", node.id, node.currentTerm, leader.LeaderId, leader.Term)
+		debugf("[Stale Leader] Node %d term %d is older than Node %d term: %d", leader.LeaderId, leader.Term, node.id, node.currentTerm)
 		return nil
 	}
 
@@ -350,10 +351,11 @@ func (node *Node) AppendEntries(leader *AppendEntriesArgs, response *AppendEntri
 	// set currentTerm = T, convert to follower
 	// stale Node
 	if leader.Term > node.currentTerm {
-		debugf("[Stale Node] Node %d term: %d < Leader %d term %d", node.id, node.currentTerm, leader.LeaderId, leader.Term)
+		debugf("[Stale Node] Node %d term: %d is older than Node %d term %d", node.id, node.currentTerm, leader.LeaderId, leader.Term)
 		node.currentTerm = leader.Term
 		node.role = Follower
 		node.votedFor = 0 // represents null
+		node.heartbeatTimer.Stop()
 		return nil
 
 	}
@@ -364,12 +366,17 @@ func (node *Node) AppendEntries(leader *AppendEntriesArgs, response *AppendEntri
 		return nil
 	}
 
-	debugf("Node %d received heartbeat from Node %d", node.id, leader.LeaderId)
+	debugf("Node %d sent heartbeat to Node %d", leader.LeaderId, node.id)
 	node.electionTimer.Reset(time.Duration(node.electionTimeout) * time.Millisecond)
 	return nil
 }
 
 func (node *Node) replicate() error {
+	if node.role != Leader {
+		debugf("[Stale Node] Node %d failed replicating: no longer a leader", node.id)
+		return nil
+	}
+
 	debugf("Node %d is replicating", node.id)
 
 	// contact all nodes
@@ -414,9 +421,13 @@ func (node *Node) replicate() error {
 		if res.err != nil {
 			return errors.New("encountered an error in replicating: " + res.err.Error())
 		}
-		// not necessary?
-		if node.currentTerm < res.replicateResult.Term {
+		// If RPC request or response contains term T > currentTerm:
+		// set currentTerm = T, convert to follower
+		if res.replicateResult.Term > node.currentTerm {
+			debugf("[Stale Leader] Node %d is converted to a 'Follower'", node.id)
 			node.currentTerm = res.replicateResult.Term
+			node.role = Follower
+			node.electionTimer.Reset(time.Duration(node.electionTimeout) * time.Millisecond)
 		}
 	}
 	return nil
@@ -425,15 +436,15 @@ func (node *Node) replicate() error {
 func (node *Node) Run() {
 	debugf("Node %d running\n", node.id)
 
+	node.condition.mu.Lock()
+	pauseCh := node.condition.pauseCh
+	node.condition.mu.Unlock()
+
 	for {
 		// when heartbeat timer runs out, it always resets the electionTimer
-
-		if node.condition.state == Paused {
-			debugf("Node %d is paused\n", node.id)
-			return
+		if node.role != Leader {
+			node.electionTimer.Reset(time.Duration(node.electionTimeout) * time.Millisecond)
 		}
-
-		node.electionTimer.Reset(time.Duration(node.electionTimeout) * time.Millisecond)
 
 		if node.role == Leader {
 			node.heartbeatTimer.Reset(time.Duration(node.heartbeatTimeout) * time.Millisecond)
@@ -444,24 +455,35 @@ func (node *Node) Run() {
 			debugf("Node %d elapsed electionTimeout: %d\n", node.id, node.electionTimeout)
 			node.startElection()
 		case <-node.heartbeatTimer.C:
-			debugf("Node %d heartbeat timer: %d\n", node.id, node.heartbeatTimeout)
+			// debugf("Node %d heartbeat timer: %d\n", node.id, node.heartbeatTimeout)
 			node.replicate()
+		case <-pauseCh:
+			debugf("Node %d is paused\n", node.id)
+			return
 		}
 	}
 }
 
 func (node *Node) Pause() {
-	debugf("Node %d pausing", node.id)
 	node.condition.mu.Lock()
 	defer node.condition.mu.Unlock()
+	if node.condition.state == Paused {
+		return
+	}
+	debugf("Node %d pausing", node.id)
 	node.condition.state = Paused
+	close(node.condition.pauseCh)
 }
 
 func (node *Node) Resume() {
-	debugf("Node %d resuming", node.id)
 	node.condition.mu.Lock()
 	defer node.condition.mu.Unlock()
+	if node.condition.state != Paused {
+		return
+	}
+	debugf("Node %d resuming", node.id)
 	node.condition.state = Running
+	node.condition.pauseCh = make(chan struct{})
 	go node.Run()
 	// resuming a leader
 	// resuming a follower

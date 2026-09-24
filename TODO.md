@@ -45,3 +45,6 @@
    - [ ] startElection - RequestVote
 - [ ] Reusable function for parallizing a RPC call
    - [ ] clean up replicate() and startElection()
+
+## Safety
+- [ ] Add sync mutex to `role`, `currentFollower` ...
