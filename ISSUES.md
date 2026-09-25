@@ -19,9 +19,8 @@
 
 
 ## How to stop node.timer.c?
- - using `chan struct{}`: a channel used exclusively for signaling and synchronization between goroutines, rather than for trasferring data.
- - benefits of `chan struct{}`
-   - zero memory footprint: o bytes
+ - using `chan struct{}`: a channel used exclusively for signaling and synchronization between goroutines, rather than for trasferring data. benefits of `chan struct{}`
+   - zero memory footprint: 0 bytes
    - clear code intent: tells the reader that data isn't passed, rather coordinating
 
 ## LeaderElection RPC

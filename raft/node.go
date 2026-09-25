@@ -28,6 +28,10 @@ type LogEntry struct {
 	Command string
 }
 
+func compareLogEntries(this LogEntry, other LogEntry) bool {
+	return this.Term == other.Term && this.Command == other.Command
+}
+
 type NodeState int
 
 const (
@@ -65,7 +69,7 @@ type Node struct {
 	// volatile state on leaders
 	nextIndex  []int
 	matchIndex []int
-	data       map[string]int
+	data       int
 
 	electionTimer  *time.Timer
 	heartbeatTimer *time.Timer
@@ -100,7 +104,7 @@ lastApplied:       %d
 -- leader state --
 nextIndex:         %v
 matchIndex:        %v
-data:             %v
+data:              %d
 ========================
 `,
 		node.id,
@@ -146,6 +150,7 @@ func StartServer(args *NodeArgs) (*Node, error) {
 		heartbeatTimer:   time.NewTimer(time.Millisecond),
 		address:          this_address,
 		addresses:        other_addresses,
+		data:             0,
 	}
 
 	// stop the heartbeat timer off the bat, this only runs for a the leader
@@ -357,7 +362,6 @@ func (node *Node) AppendEntries(leader *AppendEntriesArgs, response *AppendEntri
 		node.votedFor = 0 // represents null
 		node.heartbeatTimer.Stop()
 		return nil
-
 	}
 
 	// if the current node is in a candidate position and we receive an AppendEntries from a new leader
@@ -365,6 +369,15 @@ func (node *Node) AppendEntries(leader *AppendEntriesArgs, response *AppendEntri
 		node.role = Follower
 		return nil
 	}
+
+	// reply false if a log doesn't contain an entry at prevLogIndex whose term matches prevLogTerm
+	if node.LastLogTerm() == leader.PrevLogTerm {
+		debugf("Node %d last log term does not contain an entry at prevLogIndex %d whose terms matches %d != %d", node.id, leader.PrevLogIndex, node.LastLogTerm(), leader.PrevLogTerm)
+		response.Term = node.currentTerm
+		response.Success = false
+	}
+
+	// If an existing entry conflicts with a new one (same index but different terms), delete the existing entry and all that follows
 
 	debugf("Node %d sent heartbeat to Node %d", leader.LeaderId, node.id)
 	node.electionTimer.Reset(time.Duration(node.electionTimeout) * time.Millisecond)

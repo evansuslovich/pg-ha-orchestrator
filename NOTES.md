@@ -194,3 +194,43 @@ election_timeout (110ms - 50ms) elapsed and a follower will now turn into a cand
          - handle on fresh start when logs are empty
          - candidate.lastLogTerm == node[lastLogTermIndex]
    - 4. Has the node voted for anyone else in the term?
+
+
+
+## Log Replication Diagram:
+
+Node A (leader)
+Node B (follower)
+Node C (follower)
+
+
+You're on Instagram in Los Angeles, CA
+    --> Create Account (UI)
+        --> Meta Server (in a region near you)
+            --> Checks to see if the username exists, passwords, does your account already exist? -->
+                -->  Bad?
+                    --> Return 400 "Sorry mate"
+                -->  Good?
+                    --> Contact the DB (in our case the leader)
+                        --> Log {user: "Chlodiggity", email: chlodiggity@email.com,  password: 123432123asbdsajdnsadsadjasdn}
+                            --> Node B (DB in NY) and Node C (DB in Asia)
+                                --> Hey can you insert into your DB?
+                                    --> If majority insert then the request is commited in the leader
+                                        --> RETURN 200, YAY
+
+## Figure 7:
+ - When a leader at the top comes to power it is possible that any of the scenarios (a-f) could occur in the follower logs
+   - missing entries
+   - extra uncommited entries
+   - both (missing and extra uncommited entries)
+    - [1 1 1 4 4 5 5 6 6 6] leader
+    - [1 1 1 2 2 2 3 3 3 3 3] (node we're talking about) one of the followers
+     - if node became leader --> added several entries to its log
+       --> then crashed before committing any of them
+         --> restarted quickly --> added several entries to its log
+           --> then crashed before committing any of them
+
+
+## Notes on AppendEntries:
+ - 1. Client --> Leader
+   - Leader appends the command to its log as a new entry, then issues AppendEntries RPC (in parallel)

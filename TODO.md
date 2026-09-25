@@ -38,6 +38,8 @@
 - [ x ] Once a leader is elected, send out heartbeats
   - [ x ] Parallelize RPC calls
 
+## AppendEntries
+- [ ] Create API call from client to SET val
 
 ## Refactor
 - [ ] Determing naming convetion from the "server" and the "client" call
