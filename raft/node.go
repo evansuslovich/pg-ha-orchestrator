@@ -313,7 +313,7 @@ func (node *Node) startElection() error {
 	if vote_count >= majority {
 		node.role = Leader
 		debugf("Node %d won the election", node.id)
-		node.replicate()
+		node.replicate(&SetArgs{Command: ""})
 	}
 
 	return nil
@@ -370,27 +370,71 @@ func (node *Node) AppendEntries(leader *AppendEntriesArgs, response *AppendEntri
 		return nil
 	}
 
-	// reply false if a log doesn't contain an entry at prevLogIndex whose term matches prevLogTerm
-	if node.LastLogTerm() == leader.PrevLogTerm {
-		debugf("Node %d last log term does not contain an entry at prevLogIndex %d whose terms matches %d != %d", node.id, leader.PrevLogIndex, node.LastLogTerm(), leader.PrevLogTerm)
+	// Reply false if log doesn’t contain an entry at prevLogIndex whose terms matches prevLogTerm
+	if leader.PrevLogIndex > len(node.logs) ||
+		(leader.PrevLogIndex > 0 && node.logs[leader.PrevLogIndex-1].Term != leader.PrevLogTerm) {
 		response.Term = node.currentTerm
 		response.Success = false
+		return nil
 	}
+	// If an existing entry conflicts with a new one (same index but different terms)
+	// delete the existing entry and all that follows it. Append any new entires not already in the log
 
-	// If an existing entry conflicts with a new one (same index but different terms), delete the existing entry and all that follows
+	// leader.logs
+	// SET 10, Term 2 Index 1
+	// SET 15, Term 2 Index 2
+	// SET 20, Term 2 Index 3
+	// leader.PrevLogIndex = 3
+
+	// leader.Entries
+	// SET 25, Term 2
+
+	// node.logs
+	// SET 10, Term 2 Index 1
+	// SET 15, Term 2 Index 2
+	// SET 20, Term 2 Index 3
+
+	for entry_index, entry := range leader.Entries {
+
+		// correct Terms
+		slot := leader.PrevLogIndex + entry_index
+		if slot < len(node.logs) {
+			if node.logs[slot].Term == entry.Term {
+				continue // already have it
+			}
+			// terms do not match
+			node.logs = node.logs[:slot]
+		}
+		// once all terms are corrected, add entries
+		node.logs = append(node.logs, leader.Entries[entry_index:]...)
+		break
+	}
+	response.Term = node.currentTerm
+	response.Success = true
+
+	// If leaderCommit > commitIndex, set commitIndex = min(leaderCommit, index of last new entry)
+	if leader.LeaderCommit > node.commitIndex {
+		node.commitIndex = min(leader.LeaderCommit, leader.PrevLogIndex+len(leader.Entries))
+	}
 
 	debugf("Node %d sent heartbeat to Node %d", leader.LeaderId, node.id)
 	node.electionTimer.Reset(time.Duration(node.electionTimeout) * time.Millisecond)
 	return nil
 }
 
-func (node *Node) replicate() error {
+func (node *Node) replicate(args *SetArgs) error {
 	if node.role != Leader {
 		debugf("[Stale Node] Node %d failed replicating: no longer a leader", node.id)
 		return nil
 	}
 
-	debugf("Node %d is replicating", node.id)
+	if args.Command == "" {
+		debugf("Node %d heartbeat", node.id)
+	} else {
+		debugf("Node %d is replicating command: %s", node.id, args.Command)
+		new_log := LogEntry{Term: node.currentTerm, Command: args.Command}
+		node.logs = append(node.logs, new_log)
+	}
 
 	// contact all nodes
 	appendEntriesArgs := &AppendEntriesArgs{
@@ -451,6 +495,7 @@ func (node *Node) Run() {
 
 	node.condition.mu.Lock()
 	pauseCh := node.condition.pauseCh
+	node.condition.state = Running
 	node.condition.mu.Unlock()
 
 	for {
@@ -469,7 +514,7 @@ func (node *Node) Run() {
 			node.startElection()
 		case <-node.heartbeatTimer.C:
 			// debugf("Node %d heartbeat timer: %d\n", node.id, node.heartbeatTimeout)
-			node.replicate()
+			node.replicate(&SetArgs{Command: ""})
 		case <-pauseCh:
 			debugf("Node %d is paused\n", node.id)
 			return
@@ -498,7 +543,4 @@ func (node *Node) Resume() {
 	node.condition.state = Running
 	node.condition.pauseCh = make(chan struct{})
 	go node.Run()
-	// resuming a leader
-	// resuming a follower
-	// resuming a candidate
 }

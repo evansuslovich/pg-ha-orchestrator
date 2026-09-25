@@ -234,3 +234,34 @@ You're on Instagram in Los Angeles, CA
 ## Notes on AppendEntries:
  - 1. Client --> Leader
    - Leader appends the command to its log as a new entry, then issues AppendEntries RPC (in parallel)
+   - Followers also append the Log to their logs
+   - If Leader gets a majority of "OK"s from Followers: Commits and notifies followers that the entry is commited
+   - Conflicting entries in the the followers logs will be overwritten with the entries from the leaders' logs
+   - To bring a follower log into consistency with its own:
+     - Leader fings the latest log entry where the two logs agree, delete any entries in the follower's logs, after that point, and sends the follower all of the leader's entries after that point 
+     - all of these actions happen in response to the consistency check
+     - the leader maintains a nextIndex for each follower, which is the index of the next log entry the leader will send to that follower
+    
+
+New Leader --> re-initializes `NextIndex` 
+i.e 
+                        
+Log Index   1 2 3 4 5 6 7 8 9 10 11 12
+Leader      1 1 1 4 4 5 5 6 6 6        // leader for term 8
+Follower A  1 1 1 4 4 5 5 6 6          // missing entries
+Follower B  1 1 1 4                    // missing entries
+Follower C  1 1 1 4 4 5 5 6 6 6  6     // extra uncommited entries
+Follower D  1 1 1 4 4 5 5 6 6 6  7  7  // extra uncommited entries
+Follower E  1 1 1 4 4 4 4              // missing entries and extra uncommited entries
+Follower F  1 1 1 2 2 2 3 3 3 3  3     // missing entries and extra uncommited entries
+
+Follower F, leader for term 2, added several entries to its log, then crashed before commiting any of them; it restarded quickly, became laeder for term 3, added few more entries to its log; before any of the entries in term 2 or term 3 wer commited. The server crashed again and reminaed down for severeal terms
+
+
+
+## A leader never overwrites or deletes entries in its own Log
+ - Leader Append-Only; a leader never overwrites or deletes entries in its log, it only appends new entries
+
+## Log Matching
+ - if two logs contain an entry with the same index, then the logs are identical in all entries, up through the given index
+

@@ -8,3 +8,7 @@ client:
 
 server:
 	go run ./server -debug
+
+test:
+	make
+	go test ./raft/... -v
