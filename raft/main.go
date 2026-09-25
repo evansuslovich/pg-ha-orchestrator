@@ -131,3 +131,25 @@ func (raft *Raft) Resume(args *ViewArgs, response *Response) error {
 	response.Value = "Resume node " + strconv.Itoa(args.Id)
 	return nil
 }
+
+type SetArgs struct {
+	Command string
+}
+
+type SetResponse struct {
+	Node string
+}
+
+func (raft *Raft) Set(args *SetArgs, response *SetResponse) error {
+	index := slices.IndexFunc(raft.Nodes, func(n *Node) bool {
+		return n.role == Leader && n.condition.state == Running
+	})
+
+	if index == -1 {
+		return errors.New("Leader not found")
+	}
+
+	raft.Nodes[index].replicate(args)
+	response.Node = "Replicated I think"
+	return nil
+}

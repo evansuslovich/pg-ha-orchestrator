@@ -55,6 +55,27 @@ func main() {
 			}
 			fmt.Printf(response.Node)
 
+		case "set":
+			if len(inputs) < 2 {
+				fmt.Println("usage: set <value>")
+				continue
+			}
+
+			_, err := strconv.Atoi(inputs[1])
+
+			if err != nil {
+				fmt.Println("invalid node value:", err)
+				continue
+			}
+
+			command := "SET " + inputs[1]
+			args := &raft.SetArgs{Command: command}
+			var response raft.SetResponse
+			if err := client.Call("Raft.Set", args, &response); err != nil {
+				log.Fatal(err)
+			}
+			fmt.Println(response.Node)
+
 		case "run":
 			args := &raft.RunArgs{}
 			var response raft.RunResponse
@@ -133,6 +154,7 @@ func main() {
 			fmt.Println("build <count>     build <n> number nodes")
 			fmt.Println("select <id>       view state of a node")
 			fmt.Println("pause <id>        pause node")
+			fmt.Println("set <value>       set leader to value")
 			fmt.Println("run               run nodes")
 			fmt.Println("exit              exit application")
 		case "exit":
