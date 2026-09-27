@@ -1,4 +1,4 @@
-# TODO:
+# TODO: (CAP Theorem's consistency does NOT apply on this TODO LOL)
 
 ## Raft:
 - [ ] Strong leader
