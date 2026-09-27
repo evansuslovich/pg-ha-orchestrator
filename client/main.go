@@ -109,7 +109,7 @@ func main() {
 
 			args := &raft.EntriesArgs{Command: commands}
 			var response raft.EntriesResponse
-			if err := client.Call("Raft.Set", args, &response); err != nil {
+			if err := client.Call("Raft.Entries", args, &response); err != nil {
 				log.Fatal(err)
 			}
 

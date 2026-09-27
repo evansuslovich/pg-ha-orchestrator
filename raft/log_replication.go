@@ -185,6 +185,7 @@ func (node *Node) replicate(args *EntriesArgs) error {
 		} else if res.replicateResult.Success {
 			node.matchIndex[res.follower_idx] = followersArgs.PrevLogIndex + len(followersArgs.Entries)
 			node.nextIndex[res.follower_idx] = node.matchIndex[res.follower_idx] + 1
+			node.advanceCommitIndex()
 		} else {
 			// retry
 			node.nextIndex[res.follower_idx] = max(1, node.nextIndex[res.follower_idx]-1)
@@ -192,7 +193,6 @@ func (node *Node) replicate(args *EntriesArgs) error {
 
 	}
 
-	node.advanceCommitIndex()
 	return nil
 }
 
