@@ -277,6 +277,8 @@ func TestAppendEntries_ExistingEntryConflictsWithNewOne(t *testing.T) {
 		{Command: "SET 15", Term: 1},
 		{Command: "SET 20", Term: 2},
 	}
+	node.commitIndex = 2
+	node.lastApplied = 2
 	client := startTestNode(t, node)
 
 	// leader.logs = []LogEntry{
@@ -306,8 +308,10 @@ func TestAppendEntries_ExistingEntryConflictsWithNewOne(t *testing.T) {
 
 	// leader backs up one index and resends the entry that follows it
 	args = &AppendEntriesArgs{
-		Term: 3, LeaderId: 2,
-		PrevLogIndex: 2, PrevLogTerm: 1,
+		Term:         3,
+		LeaderId:     2,
+		PrevLogIndex: 2,
+		PrevLogTerm:  1,
 		Entries:      []LogEntry{{Command: "SET 25", Term: 3}},
 		LeaderCommit: 2,
 	}
