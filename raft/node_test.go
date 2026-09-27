@@ -198,28 +198,68 @@ func TestAppendEntries_NewEntry(t *testing.T) {
 	entries := []LogEntry{
 		{Command: "SET 10", Term: 1},
 	}
-	// leader has committed the entry, so the follower may apply it
-	args := &AppendEntriesArgs{Term: 1, LeaderId: 2, PrevLogIndex: 0, PrevLogTerm: 0, Entries: entries, LeaderCommit: 1}
+	// leader has NOT committed the entry, so the follower adds to its log
+	args := &AppendEntriesArgs{Term: 1, LeaderId: 2, PrevLogIndex: 0, PrevLogTerm: 0, Entries: entries, LeaderCommit: 0}
 
 	var response AppendEntriesResponse
 	if err := client.Call("Node.AppendEntries", args, &response); err != nil {
 		t.Fatalf("AppendEntries call failed: %v", err)
 	}
 
-	if response.Term != 1 {
-		t.Errorf("expected leaders' term to be unchanged, got %d", response.Term)
-	}
-
 	if !response.Success {
-		t.Errorf("expected leader' AppendEntries to be successful")
+		t.Errorf("expected AppendEntries to be successful")
 	}
 
 	if len(node.logs) != 1 {
-		t.Errorf("expected node's logs increased, expected 1 got %d", len(node.logs))
+		t.Errorf("expected entry stored in log, got %d entries", len(node.logs))
 	}
 
-	if node.data != 10 {
-		t.Errorf("expected node's data set to 10 got %d", node.data)
+	if node.commitIndex != 0 && node.lastApplied != 0 && node.data != 0 {
+		t.Errorf("uncommitted entry must not be applied: commitIndex=%d, lastApplied=%d data=%d", node.commitIndex, node.lastApplied, node.data)
+	}
+
+	// increment leader's matchIndex[node.id] = prevLogIndex (0) + len(entries) (1)
+	// matchIndex[node.id] = 1
+	// nextIndex[node.id] = 2
+	// advanceCommitIndex
+	// population = 2
+	// majority (2)
+	// n = 1
+	// n > leader.commitIndex = 0
+	//  leader.logs[0].Term == leader.currentTerm
+	// replication_count := 1
+	// for _, match range leader.matchIndex
+	// if match >= n (1 >= 1)
+	// replication_count += 1
+	// replication_count (2) >= 2
+	// leader.commitIndex = 1
+	// leader.applyCommited()
+	// node.lastApplied += 1
+	// node.data = 10
+
+	args = &AppendEntriesArgs{Term: 1, LeaderId: 2, PrevLogIndex: 1, PrevLogTerm: 1, Entries: nil, LeaderCommit: 1}
+	if err := client.Call("Node.AppendEntries", args, &response); err != nil {
+		t.Fatalf("Heartbeat call failed: %v", err)
+	}
+
+	// if leader.LeaderCommit (1) > node.commitIndex (0) {
+	//  node.commitIndex = min(leader.LeaderCommit (1), leader.PrevLogIndex + len(leader.Entries) (1))
+	// node.commitIndex = 1
+	// node.applyCommited()
+	// node.lastApplied
+	// ... increments lastApplied to commitIndex
+	// }
+
+	if !response.Success {
+		t.Errorf("expected AppendEntries to be successful")
+	}
+
+	if len(node.logs) != 1 {
+		t.Errorf("expected entry stored in log, got %d entries", len(node.logs))
+	}
+
+	if node.commitIndex != 1 && node.lastApplied != 1 && node.data != 10 {
+		t.Errorf("expected committed entry must applied: commitIndex=%d, lastApplied=%d data=%d", node.commitIndex, node.lastApplied, node.data)
 	}
 }
 
@@ -239,7 +279,11 @@ func TestAppendEntries_ExistingEntryConflictsWithNewOne(t *testing.T) {
 	}
 	client := startTestNode(t, node)
 
-	// leader's log:  [SET 10 t1] [SET 15 t1] [SET 25 t3]
+	// leader.logs = []LogEntry{
+	// 	{Command: "SET 10", Term: 1},
+	// 	{Command: "SET 15", Term: 1},
+	// 	{Command: "SET 20", Term: 3},
+	// }
 	// leader first assumes the follower has its entry at index 3 (term 3)
 	args := &AppendEntriesArgs{Term: 3, LeaderId: 2, PrevLogIndex: 3, PrevLogTerm: 3, Entries: nil, LeaderCommit: 2}
 

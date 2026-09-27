@@ -10,8 +10,9 @@ import (
 )
 
 type Raft struct {
-	Count int
-	Nodes []*Node
+	Count  int
+	Nodes  []*Node
+	frozen []*Node // nodes paused by Freeze, restored by Unfreeze
 }
 
 type Args struct {
@@ -132,15 +133,54 @@ func (raft *Raft) Resume(args *ViewArgs, response *Response) error {
 	return nil
 }
 
-type SetArgs struct {
-	Command string
+// Freeze pauses every running node so the cluster can be inspected.
+// Nodes that were already paused (or never started) are left alone, so
+// Unfreeze restores the cluster to exactly how it was.
+func (raft *Raft) Freeze(args *EmptyArgs, response *Response) error {
+	if raft.frozen != nil {
+		response.Value = "cluster already frozen"
+		return nil
+	}
+
+	raft.frozen = []*Node{}
+	for _, node := range raft.Nodes {
+		node.condition.mu.Lock()
+		running := node.condition.state == Running
+		node.condition.mu.Unlock()
+
+		if running {
+			node.Pause()
+			raft.frozen = append(raft.frozen, node)
+		}
+	}
+
+	response.Value = "froze " + strconv.Itoa(len(raft.frozen)) + " node(s)"
+	return nil
 }
 
-type SetResponse struct {
-	Node string
+// Unfreeze resumes only the nodes that Freeze paused.
+func (raft *Raft) Unfreeze(args *EmptyArgs, response *Response) error {
+	if raft.frozen == nil {
+		response.Value = "cluster is not frozen"
+		return nil
+	}
+
+	for _, node := range raft.frozen {
+		node.Resume()
+	}
+
+	response.Value = "unfroze " + strconv.Itoa(len(raft.frozen)) + " node(s)"
+	raft.frozen = nil
+	return nil
 }
 
-func (raft *Raft) Set(args *SetArgs, response *SetResponse) error {
+type EntriesArgs struct {
+	Command []string // empty for a heartbeat
+}
+
+type EntriesResponse struct{}
+
+func (raft *Raft) Entries(args *EntriesArgs, response *EntriesResponse) error {
 	index := slices.IndexFunc(raft.Nodes, func(n *Node) bool {
 		return n.role == Leader && n.condition.state == Running
 	})
@@ -150,6 +190,18 @@ func (raft *Raft) Set(args *SetArgs, response *SetResponse) error {
 	}
 
 	raft.Nodes[index].replicate(args)
-	response.Node = "Replicated I think"
+	return nil
+}
+
+type SpeedArgs struct {
+	Speed string
+}
+
+type SpeedResponse struct{}
+
+func (raft *Raft) Speed(args *SpeedArgs, response *SpeedResponse) error {
+	for _, node := range raft.Nodes {
+		go node.SetSpeed(args.Speed)
+	}
 	return nil
 }

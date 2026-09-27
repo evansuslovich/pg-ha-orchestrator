@@ -4,11 +4,13 @@ build:
 	go build ./...
 
 client:
+	go build ./...
 	go run ./client
 
 server:
+	go build ./...
 	go run ./server -debug
 
 test:
-	make
+	go build ./...
 	go test ./raft/... -v
