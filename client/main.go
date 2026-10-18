@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/evansuslovich/pg-ha-orchestrator/raft"
 )
@@ -73,7 +74,7 @@ func main() {
 			if err := client.Call("Raft.View", args, &response); err != nil {
 				log.Fatal(err)
 			}
-			fmt.Println(response.Node)
+			fmt.Println(response.Content)
 
 		case "set", "add", "minus":
 			if len(inputs) < 2 {
@@ -120,6 +121,27 @@ func main() {
 				log.Fatal(err)
 			}
 
+		case "live":
+			secondDelay := 1
+			if len(inputs) >= 2 {
+				secondDelay, err = strconv.Atoi(inputs[1])
+				if err != nil {
+					fmt.Println("usage: live [seconds]")
+					continue
+				}
+			}
+
+			for {
+				var response raft.ViewResponse
+				if err := client.Call("Raft.Live", &raft.EmptyArgs{}, &response); err != nil {
+					log.Fatal(err)
+				}
+				// \033[H moves the cursor to the top-left, \033[2J clears the screen,
+				// so each frame redraws over the last one instead of scrolling
+				fmt.Print("\033[H\033[2J")
+				fmt.Println(response.Content)
+				time.Sleep(time.Second * time.Duration(secondDelay))
+			}
 		case "pause":
 			if len(inputs) < 2 {
 				fmt.Println("usage: pause <id>")
@@ -193,16 +215,16 @@ func main() {
 				log.Fatal("Cannot handle more than 5 nodes")
 			}
 
-			args := &raft.Args{Count: count_of_nodes}
-			var response raft.BuildResponse
+			args := &raft.BuildArgs{Count: count_of_nodes}
+			var response raft.EmptyResponse
 			if err := client.Call("Raft.Build", args, &response); err != nil {
 				log.Fatal(err)
 			}
-			fmt.Printf("Count of nodes running: %d\n", response.Count)
 
 		case "help":
 			fmt.Println("build <count>     build <n> number nodes")
 			fmt.Println("select <id>       view state of a node")
+			fmt.Println("live <delay>      view state of all nodes")
 			fmt.Println("pause <id>        pause node")
 			fmt.Println("resume <id>       resume node")
 			fmt.Println("freeze            pause all running nodes")

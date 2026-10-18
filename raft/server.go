@@ -99,11 +99,11 @@ type Node struct {
 type EmptyArgs struct{}
 
 type ViewResponse struct {
-	Node string
+	Content string
 }
 
 func (node *Node) View(args EmptyArgs, response *ViewResponse) error {
-	response.Node = fmt.Sprintf(`===== Node %d  =====
+	response.Content = fmt.Sprintf(`===== Node %d  =====
 address:           %s
 role:              %s
 condition:         %s
@@ -157,7 +157,6 @@ func getAddressInfo(args *NodeArgs) (string, []string) {
 
 func StartServer(args *NodeArgs) (*Node, error) {
 	this_address, other_addresses := getAddressInfo(args)
-	debugf("this address: %s . other_addresses: %q\n", this_address, other_addresses)
 
 	node := &Node{
 		id:               args.Id,

@@ -1,12 +1,15 @@
 package raft
 
 import (
+	"bytes"
 	"errors"
+	"fmt"
 	"log"
 	"net/rpc"
 	"slices"
 	"strconv"
-	"sync"
+	"strings"
+	"text/tabwriter"
 )
 
 type Raft struct {
@@ -15,7 +18,7 @@ type Raft struct {
 	frozen []*Node // nodes paused by Freeze, restored by Unfreeze
 }
 
-type Args struct {
+type BuildArgs struct {
 	Count int
 }
 
@@ -27,55 +30,32 @@ type RunArgs struct{}
 
 type RunResponse struct{}
 
-func (raft *Raft) Run(args *Args, response *RunResponse) error {
+func (raft *Raft) Run(args *EmptyArgs, response *RunResponse) error {
 	for _, node := range raft.Nodes {
 		go node.Run()
 	}
 	return nil
 }
 
-type buildResult struct {
-	node *Node
-	err  error
-}
-type BuildResponse struct {
-	Count int
-}
+type EmptyResponse struct{}
 
-func (raft *Raft) Build(args *Args, response *BuildResponse) error {
-	results := make(chan buildResult, args.Count)
-	var startWg sync.WaitGroup
-
-	addresses := make([]string, args.Count)
-	for i := 0; i < args.Count; i++ {
+func (raft *Raft) Build(args *BuildArgs, response *EmptyResponse) error {
+	raft.Count = args.Count
+	addresses := make([]string, raft.Count)
+	for i := 0; i < raft.Count; i++ {
 		addresses[i] = ":" + strconv.Itoa(1234+i+1)
 	}
 
-	for i := 0; i < args.Count; i++ {
-		startWg.Add(1)
-		go func(id int) {
-			defer startWg.Done()
-			node, err := StartServer(&NodeArgs{Id: id, Addresses: addresses, ElectionTimeout: 5000})
+	for i := 0; i < raft.Count; i++ {
+		node, err := StartServer(&NodeArgs{Id: i + 1, Addresses: addresses, ElectionTimeout: 5000})
 
-			results <- buildResult{node: node, err: err}
-		}(i + 1)
-	}
-
-	go func() {
-		startWg.Wait()
-		close(results)
-	}()
-
-	for res := range results {
-		if res.err != nil {
-			return errors.New("Encountered error starting a node: " + res.err.Error())
+		if err != nil {
+			return errors.New("Encountered error starting a node: " + err.Error())
 		}
 
-		raft.Count += 1
-		raft.Nodes = append(raft.Nodes, res.node)
+		raft.Nodes = append(raft.Nodes, node)
 	}
 
-	response.Count = raft.Count
 	return nil
 }
 
@@ -155,6 +135,39 @@ func (raft *Raft) Freeze(args *EmptyArgs, response *Response) error {
 	}
 
 	response.Value = "froze " + strconv.Itoa(len(raft.frozen)) + " node(s)"
+	return nil
+}
+
+// Live renders every node side by side: one row per field, one column per node.
+func (raft *Raft) Live(args *EmptyArgs, response *ViewResponse) error {
+	labels := []string{"id", "role", "condition", "currentTerm", "votedFor", "commitIndex", "lastApplied", "nextIndex", "data"}
+
+	// rows x columns
+	output := make([][]string, len(labels))
+	for elementIndex := range output {
+		output[elementIndex] = make([]string, len(raft.Nodes))
+	}
+
+	for nodeIndex, node := range raft.Nodes {
+		node.condition.mu.Lock()
+		state := node.condition.state
+		node.condition.mu.Unlock()
+
+		nodeElements := []any{node.id, node.role, state, node.currentTerm, node.votedFor, node.commitIndex, node.lastApplied, node.nextIndex, node.data}
+
+		for elementIndex, element := range nodeElements {
+			output[elementIndex][nodeIndex] = fmt.Sprint(element)
+		}
+	}
+
+	var buf bytes.Buffer
+	w := tabwriter.NewWriter(&buf, 0, 0, 3, ' ', 0)
+	for elementIndex, row := range output {
+		fmt.Fprintln(w, labels[elementIndex]+"\t"+strings.Join(row, "\t"))
+	}
+	w.Flush()
+
+	response.Content = buf.String()
 	return nil
 }
 
