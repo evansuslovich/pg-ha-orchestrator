@@ -53,7 +53,7 @@ func (s SpeedState) String() string {
 }
 
 var speedMap = map[string][2]int{
-	// electionTimeout, heartbeatTimer
+	// speed: {electionTimeout, heartbeatTimer}
 	"snail":  {8000, 4000},
 	"slow":   {5000, 2500},
 	"medium": {3000, 1500},
@@ -61,7 +61,6 @@ var speedMap = map[string][2]int{
 }
 
 type Condition struct {
-	mu      sync.Mutex
 	state   NodeState
 	speed   SpeedState
 	pauseCh chan struct{} // closed the instant Pause() is called, wakes a blocked Run()
@@ -72,6 +71,7 @@ type Node struct {
 	electionTimeout  int // milliseconds
 	heartbeatTimeout int // millseconds
 	role             Role
+	mu               sync.Mutex
 	condition        Condition
 	electionTimer    *time.Timer
 	heartbeatTimer   *time.Timer
@@ -100,6 +100,12 @@ type EmptyArgs struct{}
 
 type ViewResponse struct {
 	Content string
+}
+
+func (node *Node) concurrentBlock(block func()) {
+	node.mu.Lock()
+	block()
+	node.mu.Unlock()
 }
 
 func (node *Node) View(args EmptyArgs, response *ViewResponse) error {
@@ -163,6 +169,7 @@ func StartServer(args *NodeArgs) (*Node, error) {
 		electionTimeout:  1000 + speedMap["slow"][1] + rand.N(args.ElectionTimeout),
 		heartbeatTimeout: 999 + speedMap["slow"][1],
 		role:             Follower,
+		mu:               sync.Mutex{},
 		condition:        Condition{state: Fresh, speed: Slow, pauseCh: make(chan struct{})},
 		currentTerm:      1,
 		electionTimer:    time.NewTimer(time.Millisecond),
@@ -201,10 +208,12 @@ func (node *Node) LastLogTerm() int {
 func (node *Node) Run() {
 	debugf("Node %d running\n", node.id)
 
-	node.condition.mu.Lock()
+	node.mu.Lock()
 	pauseCh := node.condition.pauseCh
-	node.condition.state = Running
-	node.condition.mu.Unlock()
+	if node.condition.state == Running || node.condition.state == Fresh {
+		node.condition.state = Running
+	}
+	node.mu.Unlock()
 
 	for {
 		// when heartbeat timer runs out, it always resets the electionTimer
@@ -231,8 +240,8 @@ func (node *Node) Run() {
 }
 
 func (node *Node) Pause() {
-	node.condition.mu.Lock()
-	defer node.condition.mu.Unlock()
+	node.mu.Lock()
+	defer node.mu.Unlock()
 	if node.condition.state == Paused {
 		return
 	}
@@ -242,8 +251,8 @@ func (node *Node) Pause() {
 }
 
 func (node *Node) Resume() {
-	node.condition.mu.Lock()
-	defer node.condition.mu.Unlock()
+	node.mu.Lock()
+	defer node.mu.Unlock()
 	if node.condition.state != Paused {
 		return
 	}
@@ -254,8 +263,8 @@ func (node *Node) Resume() {
 }
 
 func (node *Node) SetSpeed(speed string) error {
-	node.condition.mu.Lock()
-	defer node.condition.mu.Unlock()
+	node.mu.Lock()
+	defer node.mu.Unlock()
 	debugf("Node %d setting speed to '%s'", node.id, speed)
 	switch speed {
 	case "snail":

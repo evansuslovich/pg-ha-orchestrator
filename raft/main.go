@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"log"
 	"net/rpc"
 	"slices"
 	"strconv"
@@ -77,14 +76,11 @@ func (raft *Raft) View(args *ViewArgs, response *ViewResponse) error {
 
 	client, err := rpc.Dial("tcp", selected_node.address)
 	if err != nil {
-		log.Fatal("dialing:", err)
+		return errors.New("dialing node " + strconv.Itoa(args.Id) + ": " + err.Error())
 	}
+	defer client.Close()
 
-	if err := client.Call("Node.View", EmptyArgs{}, response); err != nil {
-		log.Fatal("raft error:", err)
-	}
-
-	return nil
+	return client.Call("Node.View", EmptyArgs{}, response)
 }
 
 func (raft *Raft) Pause(args *ViewArgs, response *Response) error {
@@ -124,9 +120,9 @@ func (raft *Raft) Freeze(args *EmptyArgs, response *Response) error {
 
 	raft.frozen = []*Node{}
 	for _, node := range raft.Nodes {
-		node.condition.mu.Lock()
+		node.mu.Lock()
 		running := node.condition.state == Running
-		node.condition.mu.Unlock()
+		node.mu.Unlock()
 
 		if running {
 			node.Pause()
@@ -140,7 +136,7 @@ func (raft *Raft) Freeze(args *EmptyArgs, response *Response) error {
 
 // Live renders every node side by side: one row per field, one column per node.
 func (raft *Raft) Live(args *EmptyArgs, response *ViewResponse) error {
-	labels := []string{"id", "role", "condition", "currentTerm", "votedFor", "commitIndex", "lastApplied", "nextIndex", "data"}
+	labels := []string{"id", "role", "condition", "currentTerm", "votedFor", "commitIndex", "lastApplied", "nextIndex", "matchIndex", "data"}
 
 	// rows x columns
 	output := make([][]string, len(labels))
@@ -149,11 +145,8 @@ func (raft *Raft) Live(args *EmptyArgs, response *ViewResponse) error {
 	}
 
 	for nodeIndex, node := range raft.Nodes {
-		node.condition.mu.Lock()
-		state := node.condition.state
-		node.condition.mu.Unlock()
 
-		nodeElements := []any{node.id, node.role, state, node.currentTerm, node.votedFor, node.commitIndex, node.lastApplied, node.nextIndex, node.data}
+		nodeElements := []any{node.id, node.role, node.condition.state, node.currentTerm, node.votedFor, node.commitIndex, node.lastApplied, node.nextIndex, node.matchIndex, node.data}
 
 		for elementIndex, element := range nodeElements {
 			output[elementIndex][nodeIndex] = fmt.Sprint(element)

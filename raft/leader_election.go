@@ -1,8 +1,6 @@
 package raft
 
 import (
-	"errors"
-	"log"
 	"net/rpc"
 	"sync"
 	"time"
@@ -118,14 +116,13 @@ func (node *Node) startElection() error {
 
 			client, err := rpc.Dial("tcp", node.addresses[i])
 			if err != nil {
-				log.Fatal("dialing:", err)
+				results <- requestVoteResult{err: err}
+				return
 			}
+			defer client.Close()
 
 			var response RequestVoteResponse
-			if err := client.Call("Node.RequestVote", requestVoteArgs, &response); err != nil {
-				log.Fatal("raft error:", err)
-			}
-
+			err = client.Call("Node.RequestVote", requestVoteArgs, &response)
 			results <- requestVoteResult{electionResult: response, err: err}
 		}(i + 1)
 	}
@@ -138,8 +135,10 @@ func (node *Node) startElection() error {
 	vote_count := 1
 
 	for res := range results {
+		// an unreachable peer counts as a vote not granted
 		if res.err != nil {
-			return errors.New("encountered an error in starting an election: " + res.err.Error())
+			debugf("Node %d failed reaching peer: %v", node.id, res.err)
+			continue
 		}
 
 		if res.electionResult.VoteGranted {
@@ -148,6 +147,9 @@ func (node *Node) startElection() error {
 
 		if node.currentTerm < res.electionResult.Term {
 			node.currentTerm = res.electionResult.Term
+			node.role = Follower
+			node.votedFor = 0
+			return nil
 		}
 	}
 

@@ -1,9 +1,7 @@
 package raft
 
 import (
-	"errors"
 	"fmt"
-	"log"
 	"net/rpc"
 	"strconv"
 	"strings"
@@ -149,14 +147,13 @@ func (node *Node) replicate(args *EntriesArgs) error {
 
 			client, err := rpc.Dial("tcp", node.addresses[i])
 			if err != nil {
-				log.Fatal("dialing:", err)
+				results <- appendEntriesResult{err: err, follower_idx: i}
+				return
 			}
+			defer client.Close()
 
 			var response AppendEntriesResponse
-			if err := client.Call("Node.AppendEntries", followersAppendEntriesArgs[i], &response); err != nil {
-				log.Fatal("raft error:", err)
-			}
-
+			err = client.Call("Node.AppendEntries", followersAppendEntriesArgs[i], &response)
 			results <- appendEntriesResult{replicateResult: response, err: err, follower_idx: i}
 		}(i + 1)
 	}
@@ -167,8 +164,10 @@ func (node *Node) replicate(args *EntriesArgs) error {
 	}()
 
 	for res := range results {
+		// an unreachable follower is normal in Raft: skip it, the next heartbeat retries
 		if res.err != nil {
-			return errors.New("encountered an error in replicating: " + res.err.Error())
+			debugf("Node %d failed reaching follower %d: %v", node.id, res.follower_idx, res.err)
+			continue
 		}
 		// get the initial arguments for the follower
 		followersArgs := followersAppendEntriesArgs[res.follower_idx]
@@ -209,13 +208,19 @@ func (node *Node) applyCommitted() {
 		}
 		debugf("Node %d applying %s %d", node.id, command, value)
 		if command == "SET" {
-			node.data = value
+			node.concurrentBlock(func() {
+				node.data = value
+			})
 		}
 		if command == "ADD" {
-			node.data += value
+			node.concurrentBlock(func() {
+				node.data += value
+			})
 		}
 		if command == "SUBTRACT" {
-			node.data -= value
+			node.concurrentBlock(func() {
+				node.data -= value
+			})
 		}
 	}
 }

@@ -1,9 +1,12 @@
 package raft
 
 import (
+	"io"
 	"log"
 	"net"
 	"net/rpc"
+	"os"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -15,15 +18,20 @@ func (w testLogWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// Debug is set once here rather than per test: Run goroutines started by
+// Resume can't be joined, so they may still read it after their test ends.
+// Logs are discarded unless a test opts in with enableDebugLogging.
+func TestMain(m *testing.M) {
+	Debug = true
+	log.SetOutput(io.Discard)
+	os.Exit(m.Run())
+}
+
 func enableDebugLogging(t *testing.T) {
 	t.Helper()
-	prevDebug, prevOutput := Debug, log.Writer()
-	Debug = true
+	prevOutput := log.Writer()
 	log.SetOutput(testLogWriter{t})
-	t.Cleanup(func() {
-		Debug = prevDebug
-		log.SetOutput(prevOutput)
-	})
+	t.Cleanup(func() { log.SetOutput(prevOutput) })
 }
 
 // startTestNode registers node on a real net/rpc server listening on an
@@ -214,7 +222,7 @@ func TestAppendEntries_NewEntry(t *testing.T) {
 		t.Errorf("expected entry stored in log, got %d entries", len(node.logs))
 	}
 
-	if node.commitIndex != 0 && node.lastApplied != 0 && node.data != 0 {
+	if node.commitIndex != 0 || node.lastApplied != 0 || node.data != 0 {
 		t.Errorf("uncommitted entry must not be applied: commitIndex=%d, lastApplied=%d data=%d", node.commitIndex, node.lastApplied, node.data)
 	}
 
@@ -258,7 +266,7 @@ func TestAppendEntries_NewEntry(t *testing.T) {
 		t.Errorf("expected entry stored in log, got %d entries", len(node.logs))
 	}
 
-	if node.commitIndex != 1 && node.lastApplied != 1 && node.data != 10 {
+	if node.commitIndex != 1 || node.lastApplied != 1 || node.data != 10 {
 		t.Errorf("expected committed entry must applied: commitIndex=%d, lastApplied=%d data=%d", node.commitIndex, node.lastApplied, node.data)
 	}
 }
@@ -334,5 +342,182 @@ func TestAppendEntries_ExistingEntryConflictsWithNewOne(t *testing.T) {
 
 	if want := (LogEntry{Command: "SET 25", Term: 3}); node.logs[2] != want {
 		t.Errorf("expected conflicting entry replaced with %v, got %v", want, node.logs[2])
+	}
+}
+
+// Population 4, majority 3. Two peers grant the vote, but a third is already
+// at a higher term. Seeing that term must turn the candidate back into a
+// follower, even though it collected enough votes.
+func TestStartElection_HigherTermResponseStepsDown(t *testing.T) {
+	enableDebugLogging(t)
+
+	peerA := newTestNode(2)
+	peerB := newTestNode(3)
+	peerC := newTestNode(4)
+	peerC.currentTerm = 5
+
+	candidate := newTestNode(1)
+	candidate.addresses = []string{serveTestNode(t, peerA), serveTestNode(t, peerB), serveTestNode(t, peerC)}
+
+	if err := candidate.startElection(); err != nil {
+		t.Fatalf("startElection: %v", err)
+	}
+
+	if candidate.role != Follower {
+		t.Errorf("expected role Follower after seeing higher term, got %v", candidate.role)
+	}
+	if candidate.currentTerm != 5 {
+		t.Errorf("expected currentTerm = 5, got %d", candidate.currentTerm)
+	}
+}
+
+func TestRequestVote_RejectsCandidateWithStaleLog(t *testing.T) {
+	enableDebugLogging(t)
+	node := newTestNode(1)
+	node.logs = []LogEntry{{Term: 2, Command: "SET 10"}}
+	client := startTestNode(t, node)
+
+	// longer log, but its last entry has an older term
+	olderTerm := &RequestVoteArgs{Term: 3, CandidateId: 2, LastLogIndex: 5, LastLogTerm: 1}
+	var response RequestVoteResponse
+	if err := client.Call("Node.RequestVote", olderTerm, &response); err != nil {
+		t.Fatalf("RequestVote call failed: %v", err)
+	}
+	if response.VoteGranted {
+		t.Errorf("expected vote rejected for candidate with older last log term")
+	}
+
+	// same last log term, but a shorter log
+	shorterLog := &RequestVoteArgs{Term: 3, CandidateId: 3, LastLogIndex: 0, LastLogTerm: 2}
+	response = RequestVoteResponse{}
+	if err := client.Call("Node.RequestVote", shorterLog, &response); err != nil {
+		t.Fatalf("RequestVote call failed: %v", err)
+	}
+	if response.VoteGranted {
+		t.Errorf("expected vote rejected for candidate with shorter log")
+	}
+
+	if node.votedFor != 0 {
+		t.Errorf("expected no vote cast, got votedFor = %d", node.votedFor)
+	}
+}
+
+func TestGetAddressInfo_SplitsSelfFromPeers(t *testing.T) {
+	addresses := []string{":1235", ":1236", ":1237"}
+
+	self, peers := getAddressInfo(&NodeArgs{Id: 2, Addresses: addresses})
+
+	if self != ":1236" {
+		t.Errorf("expected own address :1236, got %s", self)
+	}
+	if want := []string{":1235", ":1237"}; !reflect.DeepEqual(peers, want) {
+		t.Errorf("expected peers %v, got %v", want, peers)
+	}
+}
+
+// unreachableAddress returns a loopback address nothing is listening on.
+func unreachableAddress(t *testing.T) string {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	addr := l.Addr().String()
+	l.Close()
+	return addr
+}
+
+func waitForState(t *testing.T, node *Node, want NodeState) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		node.mu.Lock()
+		state := node.condition.state
+		node.mu.Unlock()
+		if state == want {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("node %d never reached state %v", node.id, want)
+}
+
+// Population 3, majority 2: the candidate plus one reachable peer is enough.
+func TestStartElection_WinsWithOnePeerUnreachable(t *testing.T) {
+	enableDebugLogging(t)
+
+	peer := newTestNode(2)
+	candidate := newTestNode(1)
+	candidate.addresses = []string{serveTestNode(t, peer), unreachableAddress(t)}
+
+	if err := candidate.startElection(); err != nil {
+		t.Fatalf("startElection: %v", err)
+	}
+
+	if candidate.role != Leader || candidate.currentTerm != 2 {
+		t.Errorf("expected Leader at term 2, got %v at term %d", candidate.role, candidate.currentTerm)
+	}
+	if peer.votedFor != 1 {
+		t.Errorf("expected peer to vote for 1, got %d", peer.votedFor)
+	}
+}
+
+func TestPauseResume_StopsAndRestartsRun(t *testing.T) {
+	enableDebugLogging(t)
+	node := newTestNode(1)
+
+	done := make(chan struct{})
+	go func() {
+		node.Run()
+		close(done)
+	}()
+	waitForState(t, node, Running)
+
+	node.Pause()
+	node.Pause() // already paused: must not close pauseCh twice
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatalf("Run did not return after Pause")
+	}
+
+	node.Resume()
+	t.Cleanup(node.Pause)
+	waitForState(t, node, Running)
+}
+
+// Pausing a node before it has ever run (e.g. build, pause 2, run) must
+// keep it paused, so a later Resume can start it.
+func TestRun_PausedBeforeStartStaysPaused(t *testing.T) {
+	enableDebugLogging(t)
+	node := newTestNode(1)
+
+	node.Pause()
+	node.Run() // pauseCh is already closed, so this returns immediately
+
+	state := node.condition.state
+	if state != Paused {
+		t.Errorf("expected state Paused, got %v", state)
+	}
+}
+
+func TestSetSpeed_UpdatesTimeouts(t *testing.T) {
+	enableDebugLogging(t)
+	node := newTestNode(1)
+
+	node.SetSpeed("fast")
+
+	if node.condition.speed != Fast || node.heartbeatTimeout != 1499 {
+		t.Errorf("expected speed Fast and heartbeatTimeout 1499, got %v and %d", node.condition.speed, node.heartbeatTimeout)
+	}
+	if node.electionTimeout < 1499 || node.electionTimeout >= 1499+1000 {
+		t.Errorf("expected electionTimeout in [1499, 2499), got %d", node.electionTimeout)
+	}
+
+	node.SetSpeed("warp")
+
+	if node.condition.speed != Fast || node.heartbeatTimeout != 1499 {
+		t.Errorf("expected unknown speed to leave settings alone, got %v and %d", node.condition.speed, node.heartbeatTimeout)
 	}
 }
