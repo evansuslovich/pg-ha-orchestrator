@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"log"
 	"net/rpc"
 	"slices"
 	"strconv"
@@ -77,14 +76,11 @@ func (raft *Raft) View(args *ViewArgs, response *ViewResponse) error {
 
 	client, err := rpc.Dial("tcp", selected_node.address)
 	if err != nil {
-		log.Fatal("dialing:", err)
+		return errors.New("dialing node " + strconv.Itoa(args.Id) + ": " + err.Error())
 	}
+	defer client.Close()
 
-	if err := client.Call("Node.View", EmptyArgs{}, response); err != nil {
-		log.Fatal("raft error:", err)
-	}
-
-	return nil
+	return client.Call("Node.View", EmptyArgs{}, response)
 }
 
 func (raft *Raft) Pause(args *ViewArgs, response *Response) error {

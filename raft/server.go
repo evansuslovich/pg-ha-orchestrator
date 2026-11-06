@@ -102,6 +102,12 @@ type ViewResponse struct {
 	Content string
 }
 
+func (node *Node) concurrentBlock(block func()) {
+	node.mu.Lock()
+	block()
+	node.mu.Unlock()
+}
+
 func (node *Node) View(args EmptyArgs, response *ViewResponse) error {
 	response.Content = fmt.Sprintf(`===== Node %d  =====
 address:           %s
@@ -204,7 +210,9 @@ func (node *Node) Run() {
 
 	node.mu.Lock()
 	pauseCh := node.condition.pauseCh
-	node.condition.state = Running
+	if node.condition.state == Running || node.condition.state == Fresh {
+		node.condition.state = Running
+	}
 	node.mu.Unlock()
 
 	for {
